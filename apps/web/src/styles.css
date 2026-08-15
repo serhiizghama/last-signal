@@ -1,0 +1,167 @@
+:root {
+  --bg-deep: #16100b;
+  --panel: #2a211a;
+  --panel-edge: #4a3826;
+  --accent: #d9772f;
+  --teal: #3f7e75;
+  --bone: #e8d9b0;
+  --toxic: #7fd13b;
+  --danger: #b33a2b;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  background: var(--bg-deep);
+  color: var(--bone);
+  font-family: ui-monospace, 'SFMono-Regular', 'Consolas', 'Liberation Mono', Menlo, monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+img {
+  image-rendering: pixelated;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.app__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 3px solid var(--panel-edge);
+}
+
+.app__title {
+  margin: 0;
+  font-size: 1.1rem;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 2px solid var(--panel-edge);
+  background: var(--panel);
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.status--loading {
+  color: var(--teal);
+  border-color: var(--teal);
+}
+
+.status--ok {
+  color: var(--toxic);
+  border-color: var(--toxic);
+}
+
+.status--error {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.resource-bar {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+}
+
+.resource-bar__item {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 44px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 4px;
+  background: var(--panel);
+  border: 2px solid var(--panel-edge);
+  text-align: center;
+}
+
+.resource-bar__label {
+  font-size: 0.6rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--bone);
+  opacity: 0.75;
+}
+
+.resource-bar__value {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--bone);
+}
+
+.app__main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.panel {
+  margin: 0;
+  padding: 16px;
+  background: var(--panel);
+  border: 3px solid var(--panel-edge);
+  line-height: 1.5;
+}
+
+.panel--ok {
+  border-color: var(--toxic);
+}
+
+.panel--danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.panel__row {
+  margin: 0 0 8px;
+}
+
+.panel__row:last-child {
+  margin-bottom: 0;
+}
+
+.countdown {
+  font-size: 1.25rem;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}

@@ -33,6 +33,14 @@ the project moving milestone by milestone.
    - run the checks: `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
      (or the scoped equivalents for the touched packages), plus a runtime smoke
      check when the step affects runtime behavior;
+   - **run them from a clean tree — `pnpm clean` first.** Stale `dist/` left by an
+     earlier step can make a genuinely broken build look green. An M0 delivery
+     passed every check locally while being guaranteed to fail CI on a fresh clone;
+   - **read stdout, not just exit codes.** Warnings — duplicate configs, deprecations,
+     ignored build scripts — pass every green check and still represent real defects;
+   - **probe for files by glob (`ls vitest.config.*`), never by guessing one
+     extension.** Concluding "no config exists" from a single `cat` of a guessed
+     filename caused a duplicated, conflicting config in M0;
    - read the diff critically: correctness, conformance to the plan, no scope
      creep, no unrequested dependencies, code style consistent with the repo;
    - walk through the Definition of Done point by point.
@@ -40,6 +48,12 @@ the project moving milestone by milestone.
    failure evidence (error output, failing test names, diff locations). Never
    proceed past a red step. After 2–3 failed fix attempts, stop and report to the
    user instead of looping.
+   - **A silent subagent is not necessarily a failed one.** Before assuming a stall
+     and dispatching a replacement, check whether it is blocked on a legitimate
+     question — its report may simply not have been delivered yet. In M0 a subagent
+     was wrongly recorded as stalled when it had correctly refused a task whose
+     premise was false; the replacement then introduced the defect the first one
+     had prevented.
 5. If verification passes: append to `docs/PROGRESS.md` — step name, what was done,
    files touched, verification evidence (actual command results) — and tell the
    user the step is ready to commit. Then continue to the next step.
