@@ -15,8 +15,8 @@ monetization.
 - **React 18 + Vite** — web client
 - A shared, pure **`game-core`** package: every game formula (economy, movement, combat)
   lives here, imported by both server and web so their logic can never drift.
-- **MongoDB**, kept 3.6-compatible — no multi-document transactions; single-document atomic
-  operations and a custom `events` collection act as the scheduler.
+- **MongoDB 7+** (single-node replica set) — multi-document transactions for multi-step
+  flows; a custom `events` collection acts as the scheduler.
 - Deployed with **pm2** + **Caddy** on a single VPS.
 
 ## Repository layout

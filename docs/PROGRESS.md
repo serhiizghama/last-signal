@@ -43,8 +43,8 @@ Recorded here as required by the orchestrator brief. None of these touch game de
   the VPS.
 - Package scope: `@last-signal/*`. Server on port 3000 (API prefix `/api`), web dev
   server on 5173 proxying `/api` → 3000.
-- No MongoDB anywhere in M0 — the scaffold must boot with zero infrastructure. Mongo
-  (3.6-compatible usage) enters in M1.
+- No MongoDB anywhere in M0 — the scaffold must boot with zero infrastructure. MongoDB 7+
+  (transactions available) enters in M1.
 - **TypeScript pinned to `^5.9.3`, deliberately not the latest major.** TS 7 is published,
   but `typescript-eslint@8` declares a peer range of `>=4.8.4 <6.1.0`, so TS 7 produces an
   unmet-peer warning and would eventually break `lint`/`typecheck`. Revisit once
@@ -343,8 +343,8 @@ servers; the web app calls the API through the proxy and renders the result. ✅
    `node dist/main.js` — it silently falls back to `'0.0.0'`.
 4. Resource values in the web resource bar are placeholders.
 5. No MongoDB anywhere yet (deliberate — M0 boots with zero infrastructure). M1 introduces
-   it under the 3.6-compatible constraints: no multi-document transactions, single-document
-   atomic ops, custom `events` scheduler collection.
+   MongoDB 7+ (single-node replica set): multi-document transactions for multi-step flows,
+   custom `events` scheduler collection.
 6. CI has never actually executed on GitHub (nothing pushed yet). The first push should be
    watched.
 

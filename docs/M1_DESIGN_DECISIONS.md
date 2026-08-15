@@ -1,458 +1,278 @@
-# M1 — Economy Core: design decisions required
+# M1 — Economy Core: design decisions (RESOLVED)
 
-**Purpose.** `docs/IMPLEMENTATION_PLAN.md` locks the *shape* of the economy but not its
-*content*. This document lists everything that must be decided before M1 can be built
-without inventing design. It is written to be handed to a stronger model / a design
-session: each item states the problem, why it matters, the realistic options, and a
-recommended default so the discussion starts from an anchor instead of a blank page.
+**Status: every item below is DECIDED** — settled with the owner in the design session of
+2026-08-15 (two-round structured Q&A over the original open-questions version of this
+file). This document is now the **binding design record for M1**; `IMPLEMENTATION_PLAN.md`
+has been updated to match. If the two ever disagree, this file wins for M1 scope.
 
-**Status of every item here: OPEN.** Nothing below has been decided by the orchestrator.
-
-**How to read.** §0 is the one question that unblocks all the numeric ones. §1–§7 are game
-design. §8–§12 are decisions that look technical but change what the game *is*, so they
-need a product answer. §13–§16 are sequencing problems created by M1 arriving before the
-map (M2) and combat (M3). §17 is a summary checklist.
-
-A note on the reference numbers below: classic Travian values are quoted only as *shape*
-(growth ratios, curve families), from memory, and must be verified against Kirilloid
-before being written into `game-core`. Do not treat any specific number here as authoritative.
+**Numbers vs shapes.** Curve *shapes* and mechanics are final. Specific *numbers* (base
+cost vectors, growth ratios, production rates, Influence thresholds) are first-pass
+drafts: they must be sanity-checked against Kirilloid where a Travian analog exists,
+written into `game-core` as an injectable config (§9), and tuned by `tools/sim` in M4
+against the §0 contract. No number below is sacred; every shape is.
 
 ---
 
-## 0. THE ANCHOR: what does progression look like over a 3-week round?
+## 0. Progression contract (the anchor)
 
-**Problem.** Every cost, time and production curve is meaningless without a target
-progression. "Levels 1–20, exponential, x5 speed" does not say whether level 20 is
-reachable, aspirational, or impossible in 21 days.
+Three named reference players form the **balance contract**. `tools/sim` (M4) must
+reproduce these trajectories; they are the pass/fail criterion for every balance pass.
 
-**Why it matters.** This single answer determines all ~200 numbers in §2–§4. Decide it
-first; everything else becomes arithmetic against it.
+| | Day 7 (end of Act 1) | Day 14 | Day 21 (round end) |
+|---|---|---|---|
+| **Casual** (2 logins/day, no night play) | resource buildings ~6–8, CC 4–5, Barracks unlocked | resource ~9–11, settlement #2 ~day 13–15 | top resource ~12–13, 2 settlements |
+| **Regular** (4–6 logins/day) | resource ~8–10, CC 5–6, first oasis raids | resource ~12–13, settlement #2 ~day 10–11 | top resource ~15–16, 2–3 settlements |
+| **Hardcore** (near-constant, farms NPCs) | resource ~10–11, active raiding | resource ~14, settlement #3 ~day 16–18 | top resource ~17–18, 3 settlements |
 
-**What must be specified:**
+Fairness rules (fixed, not tunable):
 
-- By end of **Act 1 (day 7)**: what does a competent active player have? (e.g. resource
-  buildings ~level 8–10, first army, HQ ~level 5)
-- By end of **Act 2 (day 14)**: ?
-- By **round end (day 21)**: what is the realistic max level? Is level 20 ever reached, or
-  is it a theoretical ceiling nobody touches (as in Travian, where top fields hit ~level
-  15–18 in a normal-speed round)?
-- What does a **casual** player (2 logins/day, no night play) reach vs a **hardcore** one?
-  The gap between them is a core fairness decision.
-- How much of progression is meant to come from **raiding** vs **own production**? In
-  Travian at higher speeds, raiding dominates. Is that intended here?
+- **Level 20 is a theoretical ceiling.** Nobody reaches it in a round except possibly one
+  "showcase" building for a hardcore player.
+- **Hardcore economy ≤ ~2–2.5× casual** by day 21. Raid share of income: hardcore
+  ~40–50%, casual ~10%. Raiding dominating for hardcore is intended (Travian DNA); the
+  cap on the gap is enforced via Hidden Cache, NPC defenses, and protection rules.
 
-**Recommendation.** Define three named reference players (Casual / Regular / Hardcore) with
-target building levels at day 7 / 14 / 21. Write them into the plan as the balance contract
-that `tools/sim` (M4) must reproduce. Without this, M4's balance pass has no pass/fail
-criterion.
+## 1. Resource roles
 
----
+**Model B + element of C** (role-based + tier gating):
 
-## 1. Resource identity — what are the four resources *for*?
-
-**Problem.** The plan names Scrap, Fuel, Electronics, Food but never assigns them distinct
-economic roles. If every building costs roughly equal amounts of all four, then four
-resources are decorative complexity — one resource with a x4 multiplier would play
-identically.
-
-**Why it matters.** Determines the whole cost matrix, whether the Market is interesting,
-and whether trade-offs exist at all.
-
-**Options:**
-
-| Model | Description | Consequence |
+| Resource | Role — "what you spend it on" | Production |
 |---|---|---|
-| A. Symmetric | All buildings cost all four, roughly evenly (Travian's model) | Simple, proven, but resources are interchangeable in feel; Market is about *volume*, not *access* |
-| B. Role-based | Scrap = structure/mass, Fuel = vehicles & speed, Electronics = tech/high tiers, Food = upkeep & expansion | Real trade-offs, distinct build orders, Market becomes strategically necessary |
-| C. Tiered gating | Electronics only appears in tier-2+ buildings and advanced units | Creates a clear mid-game "unlock" moment |
-
-**Recommendation.** B with a dash of C: Electronics should be scarce and mostly gate the
-advanced half of the tech tree, making the Electronics Workshop a deliberate investment
-rather than a default. Explicitly write down, per resource, "this is what you spend it on".
-
-**Also decide:** are the four resources produced at equal rates, or is Electronics
-intentionally the slowest (making it the bottleneck currency)?
-
----
-
-## 2. Building cost curves
-
-**Problem.** "Costs exponential, classic Travian curves adapted" is not implementable.
-
-**What must be specified per building (12 buildings):**
-
-- base cost vector at level 1: `{scrap, fuel, electronics, food}`
-- growth ratio `k` (Travian uses ≈1.28 for most buildings — verify)
-- whether `k` is shared by all buildings or per-building (Travian varies it)
-- rounding rule (floor to integer? round to nearest 5?)
-
-**Open sub-questions:**
-
-- Do the four **resource buildings** use a cheaper curve than the "functional" buildings
-  (Barracks, Market, Wall …)? In Travian, fields and buildings use different families.
-- Is there a **prerequisite tree** (e.g. Machine Shop requires Command Center ≥ 5)? The plan
-  calls Command Center "prerequisite hub" but never lists the actual requirements. **This is
-  a full dependency graph that must be written out — 12 nodes.**
-- Is there a **max-level variance** — do all 12 buildings really go to 20, or do some cap
-  lower (Wall at 20, Market at 20, Cold Storage at 20 … ) ?
-
-**Recommendation.** One shared `k` for a first pass, per-building base vectors, everything
-in a single constants table so `tools/sim` can sweep it. Do not hand-tune 12 curves before
-the simulator exists.
-
----
-
-## 3. Build time curve, and what "x5 speed" actually multiplies
-
-**Problem.** The plan says "speed ~x5 vs classic Travian" but never defines the scope of
-that multiplier. This is ambiguous in a way that changes the game by an order of magnitude.
-
-**Must decide — does x5 apply to:**
-
-- build times? (almost certainly yes)
-- resource production rates? (if yes *and* build times are /5, progression is x5; if only
-  times are /5, players become resource-starved and the game is a waiting game)
-- troop training times?
-- troop travel speed on the map? (affects whether raiding is viable — M2/M3, but the
-  constant belongs in `game-core` now)
-- Food consumption?
-
-**Why it matters.** Getting this wrong makes the round either trivially fast or
-permanently resource-starved, and it is very expensive to discover in M4.
-
-**Recommendation.** Define a single explicit `SPEED` config object with a named multiplier
-per domain (`build`, `production`, `training`, `travel`) rather than one global x5. Default
-them all to 5, but make each independently tunable — the simulator will almost certainly
-want them decoupled.
-
-**Also:** how does **Command Center** reduce build time — a percentage per level, or the
-Travian-style divisor curve? And is the Engineers' "faster construction" a flat %, a
-multiplier on the HQ effect, or an extra queue slot only? (see §6)
-
----
-
-## 4. Production curve and the Food problem
-
-**Problem A — the curve.** Production per hour per level for the four resource buildings is
-undefined. Travian's field output is a specific non-exponential table (roughly ×1.16–1.20
-per level, flattening late). Need: base rate at level 1, growth shape, and whether all four
-resources share the curve.
-
-**Problem B — Food has no sink in M1.** This is the sharpest design hole I can see.
-
-The plan says Food is consumed by troops, and starvation kills troops. But **troops arrive
-in M3**. In M1, the Greenhouse Farm produces a resource that nothing consumes, and Cold
-Storage caps a resource that only ever goes up. One of the four resource buildings is
-functionally dead for the entire first milestone, and there is no reason to ever build it.
-
-**Options:**
-
-| Option | Description | Cost |
-|---|---|---|
-| A. Food as a build cost | Buildings cost Food alongside other resources | Simple, immediate purpose, but weakens Food's identity as military upkeep |
-| B. Population/upkeep model | Buildings themselves consume Food per hour (Travian's crop-consumption-by-fields model) | Creates real economic pressure from minute one; more formula complexity |
-| C. Accept it | Food is inert until M3 | M1 demo feels hollow; playtesting the economy is impossible |
-| D. Pull starvation forward | Implement upkeep in M1 with a stub "population" | Extra M1 scope |
-
-**Recommendation.** B, and it is worth the complexity: a settlement whose buildings consume
-Food creates the classic "expand vs starve" tension that makes the early game interesting,
-and it makes the Greenhouse Farm a real decision. If B is rejected, A is the minimum —
-option C should be avoided, because M1's acceptance criterion is "a player can grow a
-settlement end-to-end", and a dead resource undermines exactly that.
-
----
-
-## 5. Storage caps — semantics, not just numbers
-
-**Problem.** "Warehouse caps Scrap/Fuel/Electronics" is ambiguous in an important way.
-
-**Must decide:**
-
-- Is the Warehouse cap **per resource** (Travian: 800 capacity means 800 of *each*) or a
-  **shared pool** across the three? These play very differently.
-- Cap curve per level, and the level-1 cap (this sets the early-game overflow rhythm).
-- **What happens at overflow** — production simply stops (Travian), or is wasted and logged,
-  or does it back-pressure somehow? Player-visible behaviour, needs a decision.
-- Does Food have a separate cap curve for Cold Storage, or the same one?
-- Does anything **protect** resources from raiding (Travian's hidden-treasury / cranny)? The
-  plan has no such building among the 12. Without one, small players may be farmed to zero
-  permanently once M3 lands. **This may be a missing building.**
-
-**Recommendation.** Per-resource caps (matches Travian intuition and is kinder to new
-players), production halts at cap, and seriously consider whether the 12-building list needs
-a raid-protection building — that omission is a balance risk for the whole PvP design.
-
----
-
-## 6. Build queue semantics
-
-**Problem.** "One build queue slot (Engineers: two)" underspecifies the mechanic.
-
-**Must decide:**
-
-- Is it "one build **at a time**" or "one building + a **waiting queue** you can stack"?
-  Travian is the former (plus a premium queue, which this project won't have). A no-queue
-  design punishes players who cannot log in often — relevant given the audience is ~15
-  friends with jobs.
-- For Engineers' second slot: is it **free** (any two buildings) or **restricted** (one
-  resource building + one other, the Roman model)? Free is strictly stronger and needs a
-  compensating cost.
-- **Cancellation**: allowed? Refund percentage? Travian refunds fully before completion in
-  some versions, partially in others.
-- **Demolition**: can buildings be downgraded/destroyed by the owner? Affects schema
-  (irreversible level-up vs. reversible) and matters once siege damage exists in M3.
-- What happens to a build in progress when the required resources are later stolen in a
-  raid? (Nothing — resources are already spent — but confirm.)
-
-**Recommendation.** One active build + a short waiting queue (2 slots) for everyone, because
-the target audience is casual friends across time zones; Engineers get a genuinely parallel
-second *active* build. This deviates from Travian deliberately and should be a conscious call.
-
----
-
-## 7. Influence and settlement expansion
-
-**Problem.** "An Influence score (from building levels) gates founding new settlements" — the
-formula, the thresholds, and the consumption model are all undefined.
-
-**Must decide:**
-
-- Exact formula. Sum of all building levels? Weighted by building type (Command Center worth
-  more)? Non-linear?
-- Thresholds for settlement #2 and #3, expressed against the §0 progression targets — i.e.
-  *when in the round* should a good player found their second settlement? That is the real
-  decision; the number follows from it.
-- Is Influence **spent** (consumed on founding) or a **threshold** (permanent gate)?
-- Do additional settlements produce Influence too, compounding expansion?
-- Soft cap "~3 settlements" — what enforces it: hard block, or escalating cost?
-
-**Sequencing note.** Founding requires settler convoys travelling on the map — that is M2/M3.
-So in M1 Influence is a computed number with no consumer. **Decide explicitly whether M1
-implements Influence at all**, or defers it to keep M1's scope honest. (Recommendation: put
-the *formula* in `game-core` with unit tests — it is pure and cheap — but ship no UI or
-gating until M2.)
-
----
-
-## 8. Base layout — do buildings have positions? (schema-affecting, decide before any code)
-
-**Problem.** The current planned schema is `settlements.buildings[{type, level}]` — a flat
-list with no position. But `art/reference/mockup_ui_pixel.png` shows a **spatial isometric
-base** with buildings placed on a grid, and the plan calls the mockup "binding for style AND
-layout".
-
-**These two are incompatible.** If the base screen is spatial, buildings need slots.
-
-**Must decide:**
-
-- Is the base a **list/grid of cards** (simple, mobile-friendly, fast to build) or a
-  **spatial isometric scene** (matches the mockup, far more art- and code-expensive)?
-- If spatial: how many building slots does a settlement have? Are slots typed (resource
-  slots vs building slots, as in Travian)? Can players choose placement, or is placement
-  automatic/cosmetic?
-- Can there be **multiple instances** of the same building type (Travian allows several
-  warehouses)? The current schema shape implies one-per-type. This is a real gameplay
-  decision — multiple warehouses is a classic Travian strategy.
-
-**Why it matters now.** Adding `slot` and multi-instance support to the schema later means
-migrating every settlement document, and MongoDB 3.6 without transactions makes migrations
-more painful. **Decide before M1 writes the schema.**
-
-**Recommendation.** Ship M1 with a list-based UI (honest about missing art) but design the
-schema *as if* spatial: `buildings: [{ id, type, level, slot }]` with a fixed slot count.
-Costs nothing now, avoids a migration later.
-
----
-
-## 9. Balance constants must be config-driven, not hardcoded (architecture-affecting)
-
-**Problem.** `tools/sim` (M4) exists to sweep balance parameters across whole simulated
-rounds. If `game-core` formulas import hardcoded constants directly, sweeping requires
-editing source between runs — the simulator becomes nearly useless.
-
-**Decision needed:** do `game-core` formulas take an injected `GameConfig` object
-(`calcBuildCost(config, type, level)`), or read module-level constants
-(`calcBuildCost(type, level)`)?
-
-**Trade-off.** Injection is slightly more verbose everywhere and touches every signature;
-module constants are cleaner to call but effectively unswept. Retrofitting injection later
-means rewriting every formula signature and every call site in server, web and sim.
-
-**Recommendation.** Injected config from day one, with a `DEFAULT_CONFIG` export so normal
-call sites stay short. Also version the config (`configVersion`) and store it on the
-`seasons` archive, so past rounds remain interpretable after rebalancing.
-
----
-
-## 10. Determinism, rounding and units
-
-**Problem.** `game-core` is shared by server and client precisely so they never disagree. Any
-undefined rounding is a place where the client's preview differs from the server's result — a
-visible bug class, and a trust problem in a PvP game.
-
-**Must decide and document once:**
-
-- Are stored resources **integers or floats**? (Recommendation: store as float, display
-  floored — or store integers and accumulate fractional remainder. Must be one rule.)
-- Rounding for costs, times, production: floor / round / ceil — specified per formula.
-- Time unit everywhere: milliseconds (matches `Date.now()` and the existing `msUntil`
-  helpers) — confirm and never mix seconds in.
-- Are production rates **per hour** internally (Travian convention) while time is in ms?
-  Define the canonical unit and convert at the edges only.
-- What is the **rounding of the lazy resource formula** at the storage cap, and does
-  overflow-time need to be computed exactly (for "warehouse full in 02:14" UI)?
-
-**Recommendation.** Write a short "numeric conventions" section into the plan and enforce it
-with unit tests in `game-core` — this is cheap now and expensive later.
-
----
-
-## 11. Concurrency without transactions (the most important technical decision in M1)
-
-**Problem.** MongoDB 3.6, no multi-document transactions. Starting a build means: compute
-lazily-accrued resources → verify affordability → deduct → append to queue → schedule an
-event. If two requests race (double-tap on mobile, or a player and their NPC-like automation),
-a naive implementation double-spends.
-
-**Why it is a design decision, not just an implementation detail.** The chosen pattern will
-be copy-pasted into every subsequent feature — troop training, market trades, troop
-movements, combat resolution. Getting it right once is worth real thought; getting it wrong
-propagates through M2–M5.
-
-**Must decide:**
-
-- The canonical **optimistic-concurrency pattern**: `findOneAndUpdate` with a filter that
-  encodes the precondition (expected `version`, and resource levels sufficient *as of*
-  `lastCalcAt`), retried on mismatch. Exact shape needs to be written down and reused.
-- Where lazy resource settlement happens: is `{values, lastCalcAt}` **materialised** on every
-  mutation (recommended — makes the affordability check expressible as a filter), or computed
-  on read only?
-- Idempotency keys for **event handlers**: a build-completion event must be safe to process
-  twice (crash between "apply" and "mark done").
-- **Stuck `processing` events**: if the process dies mid-handler, the event is stranded.
-  Needs a lease/timeout and a recovery sweep — decide the policy now.
-- Ordering: can two events for the same settlement be processed concurrently? (Single process
-  today — but the answer should be "handlers are safe regardless".)
-
-**Recommendation.** Materialise resources on every write, express affordability as part of the
-`findOneAndUpdate` filter, give every event an idempotency guard, and add a
-`processingStartedAt` lease with a recovery sweep. Write this up as a short "concurrency
-playbook" doc that every later milestone follows.
-
----
-
-## 12. Event scheduler semantics
-
-**Problem.** The plan describes the loop (poll `{status:'due', dueAt:{$lte:now}}`, dispatch,
-mark done) but not its behaviour under stress or failure.
-
-**Must decide:** poll interval (1s stated — confirm under ~150 NPCs); what happens to events
-that are **overdue** because the server was down for hours (replay in order? collapse?
-fast-forward?); retry policy and dead-letter handling for handlers that throw; whether
-events carry a **version** so a payload schema change doesn't break in-flight events across a
-deploy. The "server was offline" case matters: this is a 1-core VPS, and a restart during a
-21-day round is certain.
-
----
-
-## 13. Auth: Telegram Login in local development
-
-**Problem.** Telegram Login Widget requires a bot token and a **domain bound to the bot** —
-there is no such domain on `localhost`. The plan allows "guest login in dev mode only", which
-implies TG auth is only ever testable on the VPS.
-
-**Must decide:** is TG auth genuinely untested until M7 deploy, or do we tunnel
-(ngrok/cloudflared) to test earlier? Who owns the bot token and how is it injected (env, never
-committed)? What is the account identity key across rounds (`tgId`)? Are dev guest accounts
-wiped between rounds, and can they coexist with real accounts in one world?
-
-**Session strategy** is also open: JWT vs server-side session cookie. On a single-process
-1-core VPS either works; JWT avoids a session store, a cookie is easier to revoke.
-
-**Recommendation.** Guest auth for all of M1–M6, TG auth implemented behind the same service
-interface and smoke-tested once on the VPS before M7. Do not let auth block economy work.
-
----
-
-## 14. Where does a settlement live before the map exists? (sequencing)
-
-**Problem.** M1 creates settlements. The world map, terrain and spawn placement are M2. A
-settlement has `x, y` in the schema with nothing to assign them.
-
-**Must decide:** does M1 assign placeholder coordinates (e.g. a deterministic spiral from the
-centre) that M2 later replaces, or does M1 ship without coordinates and M2 backfills them?
-
-**Recommendation.** Assign real coordinates in M1 using a trivial placement rule, keeping the
-schema final and letting M2 replace only the *placement policy*. Avoid a nullable `x/y`.
-
----
-
-## 15. i18n structure
-
-**Problem.** RU is default, all strings behind keys, EN later — but no key scheme exists, and
-M0 left hardcoded Russian strings in `App.tsx` that must migrate.
-
-**Must decide:** namespace layout (`common`, `buildings`, `resources`, `errors` …); key naming
-convention; where **building/unit display names and descriptions** live (they must NOT live in
-`game-core` — it is pure logic and must stay display-free, so it exposes stable ids and the
-client maps id → key); how **server-generated messages** (battle reports, error messages) are
-localised — does the server send keys + params rather than text? (It should.) Also: RU
-pluralisation rules (RU has 3 plural forms — i18next handles it, but the keys must be authored
-for it), and number/date formatting conventions.
-
-**Recommendation.** Server returns keys + params, never prose. This decision is cheap now and
-almost impossible to retrofit once reports exist in M3.
-
----
-
-## 16. M1 scope — it is currently too large
-
-**Observation.** M1 as written bundles: Mongo schemas + lazy resources + 12 buildings with
-full curves + build queue on the event scheduler + storage caps + Influence + Telegram/guest
-auth + the Base screen UI + the i18n scaffold. That is several milestones of work by the
-plan's own "30–90 minute step" standard, and the acceptance criterion ("a player can grow a
-settlement end-to-end") only needs a subset.
-
-**Recommendation — split M1 explicitly:**
-
-- **M1a — Economy foundations:** Mongo connection + schemas, the concurrency playbook (§11),
-  lazy resources, storage caps, event scheduler wiring, all formulas in `game-core` with unit
-  tests. No UI beyond what proves it.
-- **M1b — Auth & account lifecycle:** guest auth, registration, faction choice, settlement
-  creation, placeholder placement (§14).
-- **M1c — Base screen & i18n:** the building list UI, build queue UI, live resource bar,
-  i18n scaffold + migration of M0's hardcoded strings.
-
-Defer to later milestones: Influence gating (§7), Market functionality (needs M2 movement),
-starvation (unless §4 option B/D is chosen).
-
----
-
-## 17. Checklist
-
-Blocking for M1 — cannot start without answers:
-
-- [ ] §0 progression targets (day 7 / 14 / 21, casual vs hardcore)
-- [ ] §1 resource roles
-- [ ] §2 cost curves + **building prerequisite graph**
-- [ ] §3 what x5 multiplies, per domain
-- [ ] §4 production curve + **the Food sink problem**
-- [ ] §5 storage cap semantics + **is a raid-protection building missing?**
-- [ ] §6 queue semantics (single build vs stacked queue)
-- [ ] §8 **building slots / multi-instance — schema-affecting, decide first**
-- [ ] §9 **config injection — architecture-affecting, decide first**
-- [ ] §10 numeric conventions
-- [ ] §11 **concurrency playbook — decide first**
-- [ ] §16 M1 split
-
-Shapes M1 but can be decided during it:
-
-- [ ] §7 Influence formula and thresholds
-- [ ] §12 scheduler failure semantics
-- [ ] §13 auth strategy and session model
-- [ ] §14 placeholder placement rule
-- [ ] §15 i18n key scheme + server-returns-keys rule
-
-**Three items are worth deciding before a single line of M1 is written**, because retrofitting
-them is expensive: §8 (building slots in the schema), §9 (config injection through every
-formula signature), and §11 (the concurrency pattern that every later feature will copy).
+| Scrap | Mass & structures: the bulk of every building/unit cost | Normal |
+| Fuel | Vehicles & speed: Machine Shop units, movement-related costs | Normal |
+| Electronics | Tech gate: Machine Shop, Radio Tower, high building levels, advanced units | **Deliberately slowest — the bottleneck currency** |
+| Food | Upkeep & expansion: in every build cost + hourly upkeep (§4) | Normal |
+
+Electronics gates the upper half of the tech tree, making Electronics Workshop a
+deliberate investment and the Market strategically necessary (access, not just volume).
+
+## 2. Cost curves & prerequisite graph
+
+- **Two curve families**, as in Travian: resource buildings = cheap base / steep growth
+  (Travian fields ≈ ×1.67/level — verify vs Kirilloid); functional buildings = dearer
+  base / flatter growth (≈ ×1.28 — verify).
+- **Shared growth ratio `k` per family** for the first pass; per-building `k` only if the
+  simulator demands it. Base cost vectors are per-building, expressing the §1 roles.
+- **Level caps:** all buildings 1–20, except **Hidden Cache 1–10**.
+- All constants live in one config table (§9) so `tools/sim` can sweep them.
+
+**Prerequisite graph (13 buildings; CC = Command Center, exists at L1 on settlement
+creation):**
+
+| Building | Requires |
+|---|---|
+| Scrap Yard, Fuel Refinery, Greenhouse Farm | — |
+| Warehouse, Cold Storage, Hidden Cache | — |
+| Wall | CC 1 |
+| Barracks | CC 3 |
+| Market | CC 3, Warehouse 3 |
+| Electronics Workshop | CC 3 |
+| Machine Shop | CC 5, Barracks 3, Fuel Refinery 5 |
+| Radio Tower | CC 5, Electronics Workshop 3 |
+
+Logic: week one is resources and defense; Electronics and vehicles are a conscious
+mid-game unlock; Machine Shop is additionally tied to Fuel (vehicle resource, §1).
+The level numbers are config knobs.
+
+## 3. Speed model
+
+Base tables are authored at **classic x1**; speed is applied on top via an explicit
+`SPEED` config object with **independent per-domain multipliers**:
+
+```
+SPEED = { build: 5, production: 5, training: 5, travel: ~2–3 }
+```
+
+`travel` is lower and tuned to the locked "2–4 h across half the map" — the 61×61 map is
+small, full ×5 movement would erase geography. Each knob is independently sweepable by
+the simulator. Command Center reduces build time via a Travian-style divisor curve
+(verify shape vs Kirilloid); the Engineers' faction bonus is their second active build
+slot (§6), not a stacking time modifier.
+
+## 4. Food: build cost + upkeep (full Travian model)
+
+**Both A and B — as Travian actually works:**
+
+- Food is part of **every building's build cost** (the 4th resource in every cost vector).
+- **Every building level consumes Food per hour** (upkeep). Net Food production =
+  Greenhouse output − Σ building upkeep − troop upkeep (troops from M3).
+- An upgrade that would push net Food production **negative is blocked** (Travian-style
+  free-crop gate). Buildings never starve; starvation only ever kills troops (M3,
+  weakest first).
+
+This kills the "dead resource in M1" problem completely: the Greenhouse Farm is a real
+decision from minute one, and the classic expand-vs-starve tension exists before combat.
+
+## 5. Storage
+
+- Two storage buildings, as in Travian and the plan: **Warehouse** (Scrap/Fuel/
+  Electronics) and **Cold Storage** (Food).
+- Warehouse cap is **per resource**: cap 800 = 800 of *each* of the three.
+- **Production halts at cap** — nothing accrues past it, nothing is wasted retroactively.
+  Overflow-time ("full in 02:14") must be computable exactly for the UI (§10).
+- **Hidden Cache added as the 13th building** (cranny analog): hides N of each resource
+  from raids, N grows per level, cheap, no prerequisites, cap level 10. In M1 it is just
+  another row in the constants table; its protective effect activates with combat in M3.
+  Rationale: without it, small players can be farmed to zero permanently once M3 lands —
+  unacceptable for a 15-friends casual world.
+
+## 6. Build queue
+
+- **One active build + a 2-slot waiting queue, for everyone.** Deliberate deviation from
+  Travian: the audience is casual friends across time zones.
+- **Engineers**: a second genuinely **parallel active** build (their faction identity),
+  on top of the shared waiting queue.
+- Resources are **deducted at enqueue** (atomic, predictable, one concurrency pattern).
+- **Cancellation refunds 100%** (simplicity; no exploit surface in M1 — revisit if combat
+  creates one).
+- **No owner demolition/downgrade in v1.** Schema stays append-only per level except for
+  M3 siege damage.
+- Resources stolen in a raid never affect an in-progress build (already spent).
+
+## 7. Influence
+
+- **Formula: static weighted sum** of building levels across **all** the account's
+  settlements; Command Center weighted **×3**, everything else ×1. Pure function in
+  `game-core` with unit tests.
+- **Threshold, not spent** — a permanent gate (Travian culture-point style), easy to show
+  the player "how much is missing".
+- **Hard cap: 3 settlements** per account per round in v1.
+- Thresholds calibrated to the §0 contract: settlement #2 reachable by a Regular player
+  ~day 10–11 (Casual ~day 13–15); settlement #3 realistically hardcore-only, ~day 16–18.
+- **M1 ships the formula + tests only.** No UI, no gating until M2 (founding needs settler
+  convoys, which need the map).
+
+## 8. Base layout & settlement schema
+
+- M1 UI is a **list/cards** presentation (honest about missing art), but the schema is
+  **spatial-ready from day one**:
+
+```
+buildings: [{ id, type, level, slot }]   // fixed 16 slots per settlement
+```
+
+- **One instance per building type in v1** (multi-instance off — simpler balance and UI).
+  The per-building `id` makes enabling multi-instance later a config change, not a data
+  migration.
+- Slot assignment is automatic/cosmetic in M1; a spatial base screen can reuse the same
+  data later without touching documents.
+
+## 9. Config injection
+
+- Every `game-core` formula takes an injected config: `calcBuildCost(config, type, level)`.
+- `DEFAULT_CONFIG` is exported so normal call sites stay short.
+- The config carries a **`configVersion`**, stored on each `seasons` archive entry so past
+  rounds remain interpretable after rebalancing.
+- This is what makes `tools/sim` (M4) able to sweep parameters without editing source.
+
+## 10. Numeric conventions
+
+- Resources stored as **float**, displayed **floored**. (IEEE 754 is deterministic and
+  identical in Node and browsers — client preview and server result cannot drift.)
+- Time is **milliseconds everywhere** internally; production rates are **per hour**
+  internally; conversion at the edges only.
+- Costs: **round to nearest integer**. Build/training times: **ceil to whole seconds**.
+- Overflow/ETA times (e.g. "warehouse full in 02:14") computed exactly from the lazy
+  formula, same rounding on both sides.
+- These rules live as a short "numeric conventions" section enforced by unit tests in
+  `game-core`.
+
+## 11. Concurrency playbook (MongoDB 7)
+
+**Context.** MongoDB 7+ on a single-node replica set — multi-document transactions are
+available and are the chosen mechanism for multi-step flows. Transactions give atomicity,
+but not by themselves race-safety (two transactions can both read "enough resources"
+before either commits) nor crash-safety of event processing. Hence the playbook:
+
+- **Command pattern:** every command (start build, later: train, trade, move) runs inside
+  a transaction; within it, the settlement mutation is a **version-guarded
+  `findOneAndUpdate`** (expected `version` + affordability in the filter) so racing
+  transactions conflict and retry instead of double-spending.
+- **Resource settlement:** `{values, lastCalcAt}` is **materialised at the start of every
+  command transaction** (one canonical "settle" step), never computed-on-read-only.
+- **Event processing:** claim (`due` → `processing` with `processingStartedAt`) → handle,
+  with the handler's effects + the `done` mark committed in **one transaction**. Handlers
+  stay **idempotent** anyway: a crash between claim and commit must be safely replayable.
+- **Stuck events:** `processingStartedAt` lease with a timeout + a recovery sweep that
+  returns expired `processing` events to `due`.
+- **Ordering:** single process today, but handlers must be safe under concurrent
+  processing of same-settlement events regardless.
+
+This is written up as a standalone **concurrency playbook doc during M1a**; every later
+milestone (training, trades, movements, combat) copies it verbatim.
+
+## 12. Scheduler failure semantics
+
+- **Overdue events after downtime** (a restart during a 21-day round on the 1-core VPS is
+  certain): replay strictly in **`dueAt` order** with their original timestamps — lazy
+  resources make catch-up cheap, and arrivals resolve correctly "in the past". No
+  collapsing, no fast-forward.
+- **Handler throws:** retry with backoff ×3, then `status: 'failed'` (dead-letter) + log.
+- Every event payload carries a schema **version field** so a deploy never breaks
+  in-flight events.
+- Poll interval: **1 s** (fine for ~150 NPCs ≈ 0.2 events/s).
+
+## 13. Auth & sessions
+
+- **Guest auth for all of M1–M6.** Telegram Login implemented behind the **same service
+  interface** and smoke-tested once on the VPS before M7 — auth never blocks economy work.
+- **Sessions: httpOnly cookie + server-side session stored in Mongo** (easy to revoke;
+  Mongo is there anyway). No JWT.
+- Cross-round identity key: **`tgId`**. Dev guest accounts are flagged and wiped on round
+  end; they may coexist with real accounts in a dev world only.
+- Bot token: owned by the user, injected via env, **never committed** (committed samples
+  contain placeholders only).
+
+## 14. Settlement placement before the map
+
+- M1 assigns **real coordinates from day one** via a trivial deterministic rule on the
+  outer ring (matching the locked "humans spawn in the outer ring"). No nullable `x/y`.
+- M2 replaces only the *placement policy* (terrain-aware), never the schema.
+
+## 15. i18n
+
+- **The server returns i18n keys + params, never prose** — for errors and (from M3)
+  reports. Impossible to retrofit later; decided now.
+- Namespaces: `common`, `buildings`, `resources`, `units`, `errors`, `reports`.
+- `game-core` stays display-free: it exposes stable ids only; the client maps id → key.
+- RU is default (3 plural forms — keys authored for i18next pluralisation); M0's
+  hardcoded RU strings in `App.tsx` migrate in M1c.
+
+## 16. M1 split
+
+- **M1a — Economy foundations:** Mongo 7 + schemas, concurrency playbook (§11), lazy
+  resources incl. Food upkeep (§4), storage caps (§5), event scheduler (§12), all 13
+  buildings' formulas + Influence formula in `game-core` behind injected config, unit
+  tests. UI only as far as needed to prove it.
+- **M1b — Auth & account lifecycle:** guest auth + sessions (§13), registration, faction
+  choice, settlement creation with outer-ring placement (§14).
+- **M1c — Base screen & i18n:** building list UI on the spatial schema (§8), build queue
+  UI, live resource bar, i18n scaffold + M0 string migration (§15).
+
+Deferred out of M1: Influence UI/gating (M2), Market functionality (M2 — needs movement).
+Food upkeep is **in** M1a (it is part of the production formula, not extra scope).
+
+## 17. Checklist — all resolved
+
+- [x] §0 progression contract (three reference players, fairness rules)
+- [x] §1 resource roles (B+C, Electronics bottleneck)
+- [x] §2 curve families + prerequisite graph + level caps
+- [x] §3 per-domain SPEED over x1 base tables
+- [x] §4 Food = build cost + hourly upkeep, upgrades gated on net Food
+- [x] §5 per-resource caps, halt at cap, Hidden Cache added (13th building)
+- [x] §6 one active + 2 waiting; Engineers parallel; deduct at enqueue; 100% refund
+- [x] §7 Influence: static weighted sum, threshold, hard cap 3, M1 formula-only
+- [x] §8 spatial-ready schema `{id, type, level, slot}` ×16, list UI, single-instance
+- [x] §9 injected `GameConfig` + `DEFAULT_CONFIG` + `configVersion`
+- [x] §10 numeric conventions
+- [x] §11 concurrency playbook on Mongo 7 transactions
+- [x] §12 scheduler: dueAt-order replay, 3 retries → dead-letter, payload version, 1 s
+- [x] §13 guest-first auth, cookie + Mongo session, `tgId`
+- [x] §14 real outer-ring coordinates from M1
+- [x] §15 server returns keys+params; namespaces; id-only game-core
+- [x] §16 M1a / M1b / M1c split
+
+**Follow-up work owned by the agent (before/during M1a), no user decisions required:**
+draft the numeric constants tables (base cost vectors, production rates, upkeep values,
+Influence weights/thresholds) as arithmetic against the §0 contract; verify curve shapes
+against Kirilloid; write the standalone concurrency playbook doc.

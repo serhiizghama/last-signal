@@ -71,9 +71,9 @@ the project moving milestone by milestone.
   - pnpm TypeScript monorepo: `apps/server` (NestJS), `apps/web` (React + Vite),
     `packages/game-core` (pure, deterministic, unit-tested — ALL game formulas live
     here; server and web both import from it, never duplicate a formula);
-  - MongoDB must stay 3.6-compatible: NO multi-document transactions, single-document
-    atomic ops only, the custom `events` scheduler collection — no Agenda, no Redis,
-    no new infrastructure of any kind;
+  - MongoDB 7+ (single-node replica set): multi-document transactions are available
+    and are used for multi-step flows; the custom `events` scheduler collection —
+    no Agenda, no Redis, no new infrastructure of any kind;
   - deploy target: pm2 + Caddy on a 1-core / 2 GB VPS — keep the footprint lean;
   - mobile-first UI following `art/reference/mockup_ui_pixel.png`; all UI strings
     through i18n keys, Russian as the default locale.

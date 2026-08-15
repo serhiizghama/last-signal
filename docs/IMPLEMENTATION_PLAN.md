@@ -16,17 +16,17 @@ Solo pet project, portfolio-grade quality. No monetization, ever.
 | Audience | Self + ~15 friends per world; public GitHub repo, CI, version tags |
 | Platform | Mobile-first web app; architecture ready for a Telegram Mini App wrapper later |
 | World size | 61×61 grid (3,721 tiles), ~150 total accounts (~15 human + ~135 NPC) |
-| Round | 3 weeks, speed ~x5 vs classic Travian; three acts; full world wipe at the end |
+| Round | 3 weeks; three acts; full world wipe at the end. Speed: base curves at classic x1, per-domain `SPEED` multipliers on top (`build`/`production`/`training` = 5, `travel` ≈ 2–3 tuned to "2–4 h across half the map") |
 | Persistence across rounds | Account keeps history, medals, past-season contribution ratings |
 | Factions (race analog) | Raiders (cheap mass army), Engineers (expensive strong units, fast builds), Nomads (fast, defensive) |
-| Resources | Scrap, Fuel, Electronics, Food (Food is consumed by troops; starvation kills) |
+| Resources | Scrap, Fuel, Electronics, Food. Role-based (Scrap = mass/structures, Fuel = vehicles/speed, Electronics = scarce tech gate, Food = upkeep/expansion). Food is in every build cost AND consumed hourly by building levels + troops; troop starvation kills (weakest first) |
 | Sides (global war) | **Beacon** (answer the alien Signal) vs **Silence** (silence it forever). Chosen at registration, switchable with 48h cooldown; switching resets personal contribution score |
 | Victory | King-of-the-hill over the Signal Source: both sides accumulate hold-time toward their goal; first to target wins, else larger accumulation at round end |
 | PvP | Full PvP (anyone can attack anyone, incl. own side). Raids + building destruction. **No village capture in v1** |
 | NPCs | Full game accounts, indistinguishable from humans, play by identical rules via the same service layer. Behavior profiles + scheduled ticks |
-| Content scope | ~12 building types, 5 units per faction |
+| Content scope | 13 building types, 5 units per faction |
 | Stack | TypeScript monorepo: NestJS backend + React/Vite frontend + shared `game-core` package |
-| Database | MongoDB (must run on 3.6: **no transactions**, single-document atomic ops only). Custom event scheduler collection, no Agenda/Redis |
+| Database | MongoDB 7+ (single-node replica set; **multi-document transactions available and used**). Custom event scheduler collection, no Agenda/Redis |
 | Auth | Telegram Login (+ guest login in dev mode only) |
 | Notifications | Telegram bot: incoming attack, build queue finished (toggleable) |
 | i18n | RU default, all strings through i18n keys, EN later |
@@ -71,17 +71,24 @@ Units per faction (5 roles each — stats live in `game-core` constants, tuned v
 
 ### 2.3 Resources & economy
 
-- Four resources: **Scrap, Fuel, Electronics, Food**. Troops consume Food per hour;
-  negative Food balance starves troops (weakest die first).
+- Four resources with distinct roles: **Scrap** (mass/structures), **Fuel** (vehicles &
+  speed), **Electronics** (scarce, slowest-produced; gates the upper half of the tech
+  tree), **Food** (upkeep & expansion).
+- Food works as in Travian, both ways: it is part of every building's build cost AND
+  every building level consumes Food per hour (upkeep). Net Food production =
+  Greenhouse output − building upkeep − troop upkeep. An upgrade that would push net
+  Food negative is blocked; buildings never starve — negative Food balance starves
+  troops only (weakest die first, M3).
 - Production comes from four resource buildings inside the settlement. No separate field
   ring (simplification vs Travian): resource buildings are regular buildings.
 - Lazy evaluation: `current = stored + rate × (now − lastCalcAt)`, capped by storage.
   Nothing ticks in the background.
-- Warehouse caps Scrap/Fuel/Electronics; Cold Storage caps Food.
+- Warehouse caps Scrap/Fuel/Electronics **per resource** (cap N = N of each); Cold
+  Storage caps Food. Production halts at cap (nothing is wasted retroactively).
 - Market: player-to-player and player-to-NPC trades at limited exchange ratios; merchants
   travel on the map like armies.
 
-### 2.4 Buildings (12 types)
+### 2.4 Buildings (13 types)
 
 | Building | Purpose |
 |---|---|
@@ -97,11 +104,23 @@ Units per faction (5 roles each — stats live in `game-core` constants, tuned v
 | Wall | Defense bonus; must be breached by siege |
 | Market | Trading, merchants |
 | Radio Tower | Scouting ops, intel level, incoming-attack visibility detail |
+| Hidden Cache | Cranny analog: hides N of each resource from raids (effect active from M3) |
 
-Levels 1–20, costs/times exponential (classic Travian curves adapted, x5 speed).
-One build queue slot (Engineers: two). Settlement expansion: an **Influence** score
-(from building levels) gates founding new settlements with settler convoys; soft cap
-~3 settlements per account per round.
+Levels 1–20 (Hidden Cache: 1–10), costs/times exponential — two curve families as in
+Travian (resource buildings: cheap base / steep growth; functional buildings: dearer
+base / flatter growth), shared growth ratio `k` per family for the first pass, verified
+against Kirilloid. Prerequisite graph and per-building base cost vectors live in
+`docs/M1_DESIGN_DECISIONS.md` §2.
+
+Build queue: **one active build + a 2-slot waiting queue for everyone** (deliberate
+deviation from Travian — the audience is casual friends across time zones); Engineers
+get a second *parallel active* build. Resources are deducted at enqueue; cancellation
+refunds 100%; no owner demolition in v1.
+
+Settlement expansion: an **Influence** score (static weighted sum of building levels
+across all settlements, Command Center weighted ×3) is a permanent threshold (not
+spent) gating founding new settlements with settler convoys; hard cap 3 settlements
+per account per round in v1.
 
 ### 2.5 Map & world
 
@@ -191,11 +210,13 @@ last-signal/
 (authoritative) and client (previews, countdowns, production display) import the same
 formulas — they can never drift.
 
-### 3.2 Data model (MongoDB, 3.6-compatible)
+### 3.2 Data model (MongoDB 7+)
 
-No multi-document transactions. Every mutation is a single-document atomic op
-(`findOneAndUpdate`, `$inc`, optimistic versioning where needed). Cross-document flows
-(e.g., battle resolution) are idempotent event handlers that re-check state.
+MongoDB 7+ on a single-node replica set: multi-document transactions are available and
+are the mechanism for multi-step command flows (e.g., deduct resources + append to build
+queue + schedule event). Single-document atomic ops (`findOneAndUpdate`, `$inc`) remain
+the natural path where one document suffices. Event handlers (e.g., battle resolution)
+stay idempotent and re-check state — transactions don't replace crash-safety.
 
 Collections:
 
@@ -216,8 +237,8 @@ Collections:
 
 A ~30-line worker inside the server process: every second,
 `findOneAndUpdate({status: 'due', dueAt: {$lte: now}} → status: 'processing')` in a loop,
-dispatch to a handler by type, mark done. Crash-safe (events persist), idempotent handlers,
-works identically on MongoDB 3.6 and 8.0. Single process — no distributed locking needed.
+dispatch to a handler by type, mark done. Crash-safe (events persist), idempotent handlers.
+Single process — no distributed locking needed.
 
 ### 3.4 API & realtime
 
@@ -266,11 +287,26 @@ Each milestone ends with: `pnpm lint && pnpm typecheck && pnpm test && pnpm buil
 **M0 — Scaffold.** pnpm monorepo, NestJS + Vite + game-core wired, ESLint/Prettier,
 Vitest/Jest, GitHub Actions CI, README. *Accept: CI green, dev servers boot, web calls API.*
 
-**M1 — Economy core.** Schemas, lazy resources, 12 buildings with costs/curves in
-game-core, build queue via events, storage caps, Influence. Telegram + dev-guest auth.
-Base screen UI (buildings, queue, resource bar with live client-side ticking). i18n
-scaffold (RU). *Accept: a player can grow a settlement end-to-end in the browser;
-formula unit tests pass.*
+**M1 — Economy core**, split into three sub-milestones (each ends with the same green
+bar; all design inputs are fixed in `docs/M1_DESIGN_DECISIONS.md`):
+
+- **M1a — Economy foundations.** MongoDB 7 (single-node replica set) + schemas, the
+  concurrency playbook (transactions + version-guarded updates, idempotent event
+  handlers, lease/sweep), lazy resources incl. Food upkeep, per-resource storage caps,
+  event scheduler wiring, all 13 buildings' formulas (costs, times, production,
+  prerequisites, Influence) in game-core behind an injected `GameConfig`, with unit
+  tests. *Accept: formula tests green; a build starts and completes through the API
+  against a real Mongo.*
+- **M1b — Auth & account lifecycle.** Guest auth (httpOnly cookie + Mongo-backed
+  session), registration, faction choice, settlement creation with deterministic
+  outer-ring placement; Telegram Login behind the same service interface (smoke-tested
+  on the VPS before M7). *Accept: fresh account → faction → settlement via the API.*
+- **M1c — Base screen & i18n.** Building list UI (spatial schema, list presentation),
+  build queue UI, live resource bar, i18n scaffold (RU) + migration of M0's hardcoded
+  strings. *Accept: a player can grow a settlement end-to-end in the browser.*
+
+Deferred out of M1: Influence UI/gating and Market functionality (both M2 — they need
+map movement).
 
 **M2 — Map & movement.** World generation (terrain, Source placeholder, farm oases,
 NPC seeding stub), map UI with pan/zoom, movements + arrivals via scheduler, scouting
