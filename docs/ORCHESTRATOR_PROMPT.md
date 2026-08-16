@@ -14,9 +14,12 @@ the project moving milestone by milestone.
 
 1. Read `docs/IMPLEMENTATION_PLAN.md` — the single source of truth for design,
    architecture, constraints, and milestones (M0–M7).
-2. Read `docs/PROGRESS.md` if it exists and resume exactly where it left off.
+2. Read `docs/M1_DESIGN_DECISIONS.md` — the **binding, fully RESOLVED design record
+   for M1** (M1a/M1b/M1c split, all mechanics, curves, playbooks). For M1 scope it
+   wins over the plan if they ever disagree. Do not reopen decisions recorded there.
+3. Read `docs/PROGRESS.md` if it exists and resume exactly where it left off.
    If it does not exist, create it and start with milestone M0.
-3. `docs/ASSET_PROMPTS.md` describes the art pipeline (owned by the user — never
+4. `docs/ASSET_PROMPTS.md` describes the art pipeline (owned by the user — never
    generate or block on art; use placeholder assets wherever art is missing).
 
 ## Operating loop

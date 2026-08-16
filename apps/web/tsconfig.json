@@ -5,7 +5,8 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["vite/client"],
     "noEmit": true,
-    "declaration": false
+    "declaration": false,
+    "resolveJsonModule": true
   },
   "include": ["src", "vite.config.ts"]
 }

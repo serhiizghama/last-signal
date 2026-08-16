@@ -9,5 +9,9 @@ export default defineConfig({
     include: ['src/**/*.spec.ts'],
     environment: 'node',
     globals: false,
+    // Integration specs spin up a real MongoMemoryReplSet; the first run on
+    // a machine downloads the mongod binary, which can take a while.
+    hookTimeout: 60_000,
+    testTimeout: 30_000,
   },
 });

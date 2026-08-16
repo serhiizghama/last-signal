@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
+import './i18n/config';
 import './styles.css';
 
 const rootElement = document.getElementById('root');

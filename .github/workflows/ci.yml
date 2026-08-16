@@ -28,6 +28,28 @@ jobs:
           node-version: 22
           cache: 'pnpm'
 
+      # apps/server's integration tests (mongodb-memory-server) download a ~100 MB MongoDB
+      # binary the first time `MongoMemoryReplSet.create()` runs — lazily, during `pnpm
+      # test`, regardless of pnpm's build-script blocking (that only gates npm lifecycle
+      # scripts, not this runtime download path). Cached here so a fresh runner doesn't
+      # pay for that download on every run. Keyed on the resolved
+      # `mongodb-memory-server-core` version (which pins the default MongoDB binary
+      # version downloaded) rather than a lockfile hash, so unrelated dependency bumps
+      # don't invalidate it but a real mongodb-memory-server upgrade does.
+      - name: Resolve mongodb-memory-server-core version
+        id: mongodb-memory-server-version
+        run: |
+          version=$(grep -m1 '^  mongodb-memory-server-core@' pnpm-lock.yaml | sed -E 's/^  mongodb-memory-server-core@([^:]+):/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache mongodb-memory-server binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ steps.mongodb-memory-server-version.outputs.version }}
+          restore-keys: |
+            mongodb-binaries-${{ runner.os }}-
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm format:check

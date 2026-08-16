@@ -1,6 +1,7 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ApiError } from './api/client';
 import type { HealthResponse } from './useHealth';
 import { useHealth } from './useHealth';
 
@@ -49,7 +50,7 @@ describe('useHealth', () => {
     });
   });
 
-  it('reports the error state on a non-2xx response', async () => {
+  it('reports a typed ApiError carrying the HTTP status on a non-2xx response', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() => Promise.resolve(jsonResponse({}, 500))),
@@ -60,10 +61,17 @@ describe('useHealth', () => {
     await waitFor(() => {
       expect(result.current.state).toBe('error');
     });
-    expect(result.current).toMatchObject({ message: expect.stringContaining('500') });
+
+    const state = result.current;
+    if (state.state !== 'error') {
+      throw new Error('expected error state');
+    }
+    expect(state.error).toBeInstanceOf(ApiError);
+    expect(state.error.key).toBe('errors.network.httpStatus');
+    expect(state.error.params).toEqual({ status: 500 });
   });
 
-  it('reports the error state on a network failure', async () => {
+  it('reports a generic network ApiError on a network failure, never the raw exception message', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() => Promise.reject(new Error('Failed to fetch'))),
@@ -72,7 +80,15 @@ describe('useHealth', () => {
     const { result } = renderHook(() => useHealth());
 
     await waitFor(() => {
-      expect(result.current).toEqual({ state: 'error', message: 'Failed to fetch' });
+      expect(result.current.state).toBe('error');
     });
+
+    const state = result.current;
+    if (state.state !== 'error') {
+      throw new Error('expected error state');
+    }
+    expect(state.error).toBeInstanceOf(ApiError);
+    expect(state.error.key).toBe('errors.network.unknown');
+    expect(state.error.params).toEqual({});
   });
 });

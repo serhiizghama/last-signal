@@ -17,7 +17,10 @@ async function bootstrap(): Promise<void> {
 
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  app.enableCors({ origin: DEV_WEB_ORIGIN });
+  // `credentials: true`: the session cookie (§13) is httpOnly and cross-origin (the web
+  // app's Vite dev server is a different origin from the API) — without this, the browser
+  // never sends or accepts the cookie regardless of what the client's own fetch call asks for.
+  app.enableCors({ origin: DEV_WEB_ORIGIN, credentials: true });
 
   const configService = app.get(ConfigService);
   const port = Number(configService.get<string>('PORT', String(DEFAULT_PORT)));

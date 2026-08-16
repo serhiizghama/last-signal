@@ -1,0 +1,30 @@
+services:
+  # Local dev MongoDB for apps/server. Runs as a single-node replica set —
+  # required for multi-document transactions, which the server's concurrency
+  # playbook depends on (see docs/M1_DESIGN_DECISIONS.md, "Concurrency playbook").
+  #
+  # Host port 27117 (not the default 27017): 27017 is already in use by an
+  # unrelated project's container on dev machines.
+  last-signal-mongo:
+    image: mongo:7
+    container_name: last-signal-mongo
+    restart: unless-stopped
+    command: ['--replSet', 'rs0', '--bind_ip_all']
+    ports:
+      - '27117:27017'
+    volumes:
+      - last-signal-mongo-data:/data/db
+    healthcheck:
+      # Idempotent across restarts: if the replica set is already initiated,
+      # `rs.status()` succeeds and we just report its `ok` value. If not
+      # (first boot, or a fresh volume), `rs.status()` throws and we initiate
+      # it once, here, then report healthy.
+      test: >-
+        mongosh --quiet --eval 'try { quit(rs.status().ok === 1 ? 0 : 1) } catch (e) { rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "localhost:27017" }] }); quit(0) }'
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  last-signal-mongo-data:

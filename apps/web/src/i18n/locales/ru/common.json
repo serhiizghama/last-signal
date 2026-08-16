@@ -1,0 +1,86 @@
+{
+  "app": {
+    "title": "ПОСЛЕДНИЙ СИГНАЛ"
+  },
+  "health": {
+    "loading": "Подключение…",
+    "ok": "Онлайн",
+    "error": "Нет связи",
+    "connectionError": "Ошибка соединения: {{message}}",
+    "coreVersion": "Версия ядра: {{version}}",
+    "nextSignal": "До следующего сигнала:"
+  },
+  "welcome": {
+    "title": "Добро пожаловать в убежище",
+    "description": "Эфир молчит уже который день. Кто-то должен подать сигнал первым.",
+    "playAsGuest": "Играть как гость"
+  },
+  "register": {
+    "title": "Кто вы в этом мире?",
+    "nameLabel": "Позывной",
+    "namePlaceholder": "Введите позывной",
+    "factionLabel": "Выберите фракцию",
+    "submit": "Подтвердить"
+  },
+  "factions": {
+    "raiders": {
+      "name": "Рейдеры",
+      "description": "Дешёвая, но многочисленная армия."
+    },
+    "engineers": {
+      "name": "Инженеры",
+      "description": "Дорогие сильные бойцы и второй параллельный слот строительства."
+    },
+    "nomads": {
+      "name": "Кочевники",
+      "description": "Быстрые и живучие в обороне."
+    }
+  },
+  "createSettlement": {
+    "title": "Пора заложить поселение",
+    "description": "Без поселения не выжить в Пустоши. Заложите первый лагерь.",
+    "submit": "Основать поселение"
+  },
+  "base": {
+    "coordinates": "Координаты: {{x}}:{{y}}",
+    "buildingsTitle": "Постройки",
+    "level": "Ур. {{level}}",
+    "buildingsCount_one": "{{count}} постройка",
+    "buildingsCount_few": "{{count}} постройки",
+    "buildingsCount_many": "{{count}} построек",
+    "buildingsCount_other": "{{count}} постройки",
+    "notBuilt": "Не построено",
+    "nextLevel": "Следующий уровень: {{level}}",
+    "buildTime": "Время постройки: {{duration}}",
+    "build": "Построить",
+    "upgrade": "Улучшить",
+    "availableIn": "Доступно через {{duration}}",
+    "missingPrerequisiteItem": "{{name}} (ур. {{level}})",
+    "resourcesTitle": "Ресурсы",
+    "perHour": "{{rate}}/ч",
+    "full": "Заполнено",
+    "fullIn": "Заполнится через {{duration}}",
+    "foodDeficit": "Дефицит еды",
+    "queueTitle": "Очередь построек",
+    "queueCapacity": "{{current}}/{{capacity}}",
+    "queueEmpty": "Очередь пуста",
+    "queueActive": "В работе",
+    "queuePosition": "Позиция в очереди: {{position}}",
+    "queueRemaining": "Осталось: {{duration}}",
+    "queueCancel": "Отменить"
+  },
+  "nav": {
+    "map": "Карта",
+    "base": "База",
+    "units": "Войска",
+    "market": "Рынок",
+    "reports": "Отчёты",
+    "side": "Сторона",
+    "settings": "Настройки"
+  },
+  "actions": {
+    "loading": "Загрузка…",
+    "retry": "Повторить",
+    "submitting": "Отправка…"
+  }
+}

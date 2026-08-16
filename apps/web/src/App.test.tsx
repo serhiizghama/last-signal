@@ -1,5 +1,4 @@
-import { RESOURCE_KINDS } from '@last-signal/game-core';
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from './App';
@@ -21,10 +20,28 @@ function jsonResponse(body: unknown, status = 200): Response {
   } as Response;
 }
 
+function notAuthenticatedResponse(): Response {
+  return jsonResponse({ error: { key: 'errors.auth.notAuthenticated', params: {} } }, 401);
+}
+
 async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 5; i += 1) {
     await Promise.resolve();
   }
+}
+
+/** Routes the shared `fetch` mock by URL — `App` fires off `/api/health` and `/api/auth/me` at once. */
+function stubFetchRoutes(routes: Record<string, () => Promise<Response>>): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((url: string) => {
+      const route = routes[url];
+      if (!route) {
+        return Promise.reject(new Error(`Unhandled request: ${url}`));
+      }
+      return route();
+    }),
+  );
 }
 
 afterEach(() => {
@@ -33,29 +50,30 @@ afterEach(() => {
 });
 
 describe('App', () => {
-  it('shows a loading indicator while the health check is in flight', () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => new Promise<Response>(() => {})),
-    );
+  it('shows a loading status badge while the health check is in flight', () => {
+    stubFetchRoutes({
+      '/api/health': () => new Promise<Response>(() => {}),
+      '/api/auth/me': () => Promise.resolve(notAuthenticatedResponse()),
+    });
 
     render(<App />);
 
-    expect(screen.getByText(/Устанавливаем связь/)).toBeInTheDocument();
+    expect(screen.getByText('Подключение…')).toBeInTheDocument();
   });
 
   it('shows the game-core version and a live-ticking countdown once connected', async () => {
     vi.useFakeTimers();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => Promise.resolve(jsonResponse(HEALTH_RESPONSE))),
-    );
+    stubFetchRoutes({
+      '/api/health': () => Promise.resolve(jsonResponse(HEALTH_RESPONSE)),
+      '/api/auth/me': () => Promise.resolve(notAuthenticatedResponse()),
+    });
 
     render(<App />);
 
     await act(flushMicrotasks);
 
-    expect(screen.getByText(HEALTH_RESPONSE.gameCoreVersion)).toBeInTheDocument();
+    expect(screen.getByText('Онлайн')).toBeInTheDocument();
+    expect(screen.getByText(/1\.2\.3/)).toBeInTheDocument();
     expect(screen.getByText('01:00')).toBeInTheDocument();
 
     await act(async () => {
@@ -66,44 +84,25 @@ describe('App', () => {
     expect(screen.queryByText('01:00')).not.toBeInTheDocument();
   });
 
-  it('shows an error message when the health check fails', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => Promise.resolve(jsonResponse({}, 503))),
-    );
+  it('shows a translated connection error when the health check fails', async () => {
+    stubFetchRoutes({
+      '/api/health': () => Promise.resolve(jsonResponse({}, 503)),
+      '/api/auth/me': () => Promise.resolve(notAuthenticatedResponse()),
+    });
 
     render(<App />);
 
     expect(await screen.findByText(/Ошибка соединения/)).toBeInTheDocument();
   });
 
-  it('shows an error message on a network failure', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => Promise.reject(new Error('network down'))),
-    );
+  it('renders the onboarding welcome screen below the header when there is no session', async () => {
+    stubFetchRoutes({
+      '/api/health': () => Promise.resolve(jsonResponse(HEALTH_RESPONSE)),
+      '/api/auth/me': () => Promise.resolve(notAuthenticatedResponse()),
+    });
 
     render(<App />);
 
-    expect(await screen.findByText(/network down/)).toBeInTheDocument();
-  });
-
-  it('renders one labeled entry per resource kind from RESOURCE_KINDS', () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => new Promise<Response>(() => {})),
-    );
-
-    render(<App />);
-
-    expect(RESOURCE_KINDS).toHaveLength(4);
-
-    const resourceBar = screen.getByRole('list', { name: 'Ресурсы' });
-    const items = within(resourceBar).getAllByRole('listitem');
-
-    expect(items).toHaveLength(RESOURCE_KINDS.length);
-    for (const item of items) {
-      expect((item.textContent ?? '').trim().length).toBeGreaterThan(0);
-    }
+    expect(await screen.findByText('Добро пожаловать в убежище')).toBeInTheDocument();
   });
 });
