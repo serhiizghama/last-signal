@@ -103,6 +103,17 @@ slot (§6), not a stacking time modifier.
 This kills the "dead resource in M1" problem completely: the Greenhouse Farm is a real
 decision from minute one, and the classic expand-vs-starve tension exists before combat.
 
+**Starting composition of a settlement (decided 2026-08-16, after M1 shipped).** A new
+settlement is created with the **Command Center at level 1 and nothing else**. Since the
+Command Center has Food upkeep and nothing produces Food yet, a fresh settlement is
+net-negative on Food, so the gate above makes the **Greenhouse Farm the only legal first
+build**. That is intended, not a gap: "secure food first" is the authentic Travian opening
+and it teaches the upkeep rule by making the player feel it. The gate stays **absolute**
+(blocking any result that is net-negative), not relative — a relative gate would let a player
+dig the hole deeper. Recorded because the emergent single-choice opening is a consequence
+worth owning deliberately; the alternatives considered were starting with a Greenhouse L1 and
+making the gate relative, both rejected.
+
 ## 5. Storage
 
 - Two storage buildings, as in Travian and the plan: **Warehouse** (Scrap/Fuel/

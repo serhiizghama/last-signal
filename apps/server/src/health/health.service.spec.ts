@@ -2,6 +2,8 @@ import { GAME_CORE_VERSION } from '@last-signal/game-core';
 import type { Connection } from 'mongoose';
 import { describe, expect, it } from 'vitest';
 
+import { SERVER_VERSION } from '../version';
+
 import { HealthService } from './health.service';
 
 // A real Mongoose Connection is exercised in health.integration.spec.ts
@@ -24,7 +26,10 @@ describe('HealthService', () => {
     expect(health.uptimeMs).toBeGreaterThanOrEqual(0);
     expect(Number.isInteger(health.uptimeMs)).toBe(true);
     expect(health.gameCoreVersion).toBe(GAME_CORE_VERSION);
-    expect(typeof health.version).toBe('string');
+    // Pinned to the constant, not just `typeof 'string'`: the previous implementation read
+    // `process.env.npm_package_version` and silently fell back to '0.0.0' under pm2, which a
+    // type-only assertion could never catch.
+    expect(health.version).toBe(SERVER_VERSION);
     expect(health.db).toBe('up');
   });
 

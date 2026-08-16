@@ -69,14 +69,22 @@ port 3000.
 ## API
 
 - `GET /api/health` — liveness check.
+- `POST /api/auth/guest` — guest login; sets the httpOnly session cookie.
+- `GET /api/auth/me` — the current account, or `401` when not authenticated.
+- `POST /api/auth/logout` — revokes the session server-side and clears the cookie.
+- `POST /api/accounts/register` — claims a name and a faction (and optionally a side).
+- `POST /api/settlements` — founds the account's settlement at a deterministic outer-ring tile.
+- `GET /api/settlements/mine` — the authenticated account's settlements.
 - `GET /api/settlements/:id` — current settlement state (buildings, resources, build
   queue), settling lazy resource accrual up to the request time first.
 - `POST /api/settlements/:id/build` — enqueue a building level (`{ "type": "<buildingType>" }`).
 - `POST /api/settlements/:id/build/:queueItemId/cancel` — cancel a queued/active build,
   refunding its cost in full.
-- `POST /api/dev/seed-settlement` — creates a guest account + a level-1 Command Center
-  settlement for local testing. Dev-only: returns 404 once `NODE_ENV=production`. Stands
-  in for real registration until M1b ships guest auth.
+- `POST /api/dev/seed-settlement` — creates a guest account + a settlement (through the real
+  placement path) for local testing. Dev-only: returns 404 once `NODE_ENV=production`.
+
+Every settlement endpoint is ownership-checked: another account's settlement answers `404`,
+not `403`, so existence is never leaked. Errors carry i18n keys (`{ key, params }`), never prose.
 
 All build-command mutations run under the transaction + version-guard concurrency pattern
 described in [`docs/CONCURRENCY_PLAYBOOK.md`](docs/CONCURRENCY_PLAYBOOK.md).
@@ -102,12 +110,23 @@ Run from the repo root:
 **M0 — scaffold — complete.** Monorepo, NestJS server, Vite web client, and `game-core`
 are wired together with a shared lint/format/typecheck/test/build pipeline and CI.
 
-**M1a — Economy foundations — complete.** MongoDB 7 single-node replica set (schemas,
-indexes, transactions), the `events` scheduler (claim/lease/sweep, retry → dead-letter,
-`dueAt`-order replay), and the build command flow (enqueue/cancel a building level through
-`/api/settlements`, transaction + version-guarded writes, idempotent completion handling)
-are implemented and tested — see [`docs/CONCURRENCY_PLAYBOOK.md`](docs/CONCURRENCY_PLAYBOOK.md)
-for how. UI for it lands in M1c.
+**M1 — Economy core — complete** (M1a + M1b + M1c):
+
+- **M1a — Economy foundations.** All 13 buildings' formulas in `game-core` behind an
+  injectable config, MongoDB 7 single-node replica set (schemas, indexes, transactions), the
+  `events` scheduler (claim/lease/sweep, retry → dead-letter, `dueAt`-order replay), and the
+  build command flow (enqueue/cancel/complete, transaction + version-guarded writes,
+  idempotent completion) — see [`docs/CONCURRENCY_PLAYBOOK.md`](docs/CONCURRENCY_PLAYBOOK.md)
+  for the pattern every future command copies.
+- **M1b — Auth & account lifecycle.** Guest auth over revocable, Mongo-backed sessions in an
+  httpOnly cookie, registration with faction choice, and settlement creation at a
+  deterministic outer-ring tile on the 61×61 grid. Telegram Login sits behind the same
+  interface as a stub until M7.
+- **M1c — Base screen & i18n.** The mobile-first base screen — live resource bar, building
+  list, 3-slot build queue with countdowns and cancel — plus the i18next scaffold with RU as
+  the shipped locale and every string behind a key.
+
+Next: **M2 — Map & movement.**
 
 Milestones: M0 scaffold · M1 economy core · M2 map & movement · M3 combat · M4 NPCs ·
 M5 sides & endgame · M6 visual polish · M7 launch round.

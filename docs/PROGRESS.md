@@ -9,11 +9,18 @@ Source of truth for design: `docs/IMPLEMENTATION_PLAN.md`.
 
 ## Current position
 
-**Milestone: M1 — Economy core — ✅ COMPLETE** (M1a + M1b + M1c), awaiting the user's
-personal review before M2 (Map & movement) starts. Full milestone summary at the bottom.
-M0 is complete, reviewed and committed by the user (`d794a3e`); its milestone summary is
-at the bottom of this file. Design inputs for M1 are fixed in `docs/M1_DESIGN_DECISIONS.md`
-(binding) — no design decisions are reopened here.
+**Milestone: M1 — Economy core — ✅ COMPLETE, reviewed and committed** (`78b0ffd`); M0 the
+same (`d794a3e`). Both milestone summaries are at the bottom of this file. Design inputs for
+M1 are fixed in `docs/M1_DESIGN_DECISIONS.md` (binding) — no design decisions are reopened here.
+
+**Next:** the owner runs a dedicated **M2 design session** producing
+`docs/M2_DESIGN_DECISIONS.md` (binding, same role as the M1 record); the brief for it is
+`docs/M2_DESIGN_SESSION_PROMPT.md`. Implementation of M2 (Map & movement) starts only after
+that record exists — no M2 design is invented while coding.
+
+**Post-M1 debt sweep — ✅ done** (see the entry directly below): both owner decisions from
+the M1 open-questions list are recorded, the stale doc claims are corrected, and the two
+M0 config defects are fixed.
 
 ### M1a decomposition
 
@@ -964,7 +971,85 @@ Browser tab closed, both dev processes killed, ports 3000/5173 confirmed free.
 
 ---
 
-## ✅ Milestone M1 — Economy core: COMPLETE (awaiting user review)
+### Post-M1 debt sweep & owner decisions ✅
+
+Done directly by the orchestrator (no subagents — four small, surgical changes), after the
+owner reviewed and committed M1 in `78b0ffd`.
+
+**Owner decisions taken in this session (2026-08-16), both previously parked as open
+questions:**
+
+1. **A new settlement starts with the Command Center at level 1 only — option (a), accept as
+   is.** The Food gate therefore makes the Greenhouse Farm the only legal first build, and
+   that is intended: "secure food first" is the authentic Travian opening and teaches the
+   upkeep rule by making the player feel it. No code change; recorded in
+   `docs/M1_DESIGN_DECISIONS.md` §4 so it is a decision, not an accident of the rules.
+2. **The compressed progression bands stay deferred to M4** (Casual +1, Hardcore −1..2
+   levels). Confirmed: `tools/sim` tunes the constants once raiding, NPCs and the map are
+   modelled, because raid income is the differentiator the §0 contract assumes.
+
+**M0 config debt closed:**
+
+- **`version` no longer depends on `npm_package_version`.** It read that env var, which is
+  only set when the process is launched via a package-manager script — under pm2's
+  `node dist/main.js` it is undefined and `/api/health` silently reported `0.0.0`. Replaced
+  with a `SERVER_VERSION` constant in `apps/server/src/version.ts` (mirroring
+  `GAME_CORE_VERSION`), plus `version.spec.ts`, which reads the real `package.json` and fails
+  if the two drift. `health.service.spec.ts` now pins `health.version` to the constant instead
+  of merely asserting `typeof === 'string'` — the old assertion passed happily while the value
+  was wrong.
+- **CORS origin is config-driven.** `CORS_ORIGINS` (comma-separated) parsed by
+  `apps/server/src/cors-origins.ts`, defaulting to the Vite dev origin so local `pnpm dev`
+  needs no `.env` entry; documented in `.env.example`. Wildcard is deliberately unsupported —
+  browsers reject `*` on credentialed requests, so it would break every login while looking
+  permissive. The resolved origins are logged at boot, because a CORS misconfiguration is
+  otherwise invisible server-side.
+
+**Stale documentation corrected:** this log claimed "Nothing has been committed" and the
+README's status section listed only M1a as complete. Both now match reality (M0 and M1
+committed; M1a/M1b/M1c all shipped), and the README's API list gained the M1b auth,
+registration and settlement endpoints plus the ownership/404 and i18n-error conventions.
+
+**CI has now actually run on GitHub — the last unverified M0/M1 claim.** Queried the Actions
+API directly (`gh` is not installed): two runs, both `success`, on `d794a3e` and on
+**`78b0ffd`** (the full M1 tree, 2026-08-16T07:53Z). Every step green in the real runner,
+including `Resolve mongodb-memory-server-core version` → `Cache mongodb-memory-server
+binaries` → `pnpm install --frozen-lockfile` → `format:check` → `lint` → `typecheck` →
+`test` → `build`. The Mongo-binary cache added in M1a.8 is therefore validated by an actual
+run, not just by parsing.
+
+**Verification — executed by the orchestrator from a `pnpm clean` tree:**
+
+| Check | Result |
+|---|---|
+| `pnpm format:check` | all matched files match |
+| `pnpm lint` | exit 0, clean |
+| `pnpm typecheck` | 3/3 packages `Done` |
+| `pnpm test` | **248 passed** — game-core 144, **server 66** (59 → +7), web 38 |
+| `pnpm build` | 3/3 packages emit |
+
+Plus a runtime smoke check — the built `dist/main.js` run as pm2 would run it (plain
+`node dist/main.js`, no package-manager wrapper), against the real Docker Mongo:
+
+- `GET /api/health` → `{"status":"ok","version":"0.0.0","gameCoreVersion":"0.0.0","db":"up"}`.
+  That the defect was real is shown separately: `node -e 'console.log(process.env.npm_package_version)'`
+  prints **`undefined`** under exactly this launch mode, so the old code took its fallback
+  every time in production. `dist/` no longer references the env var anywhere except the
+  explanatory comment, and `version.spec.ts` pins the constant to `package.json`.
+- Boot log with `CORS_ORIGINS` unset → `CORS origins: http://localhost:5173`; with
+  `CORS_ORIGINS='https://a.example, https://b.example'` → `CORS origins: https://a.example,
+  https://b.example`.
+- Behaviour, not just logging: a preflight from `https://b.example` answers `204` with
+  `Access-Control-Allow-Origin: https://b.example` and `Access-Control-Allow-Credentials: true`,
+  while a preflight from the previously hardcoded `http://localhost:5173` comes back with
+  **no `Access-Control-Allow-Origin` header at all** — i.e. the allowlist is genuinely driven
+  by config now, not by the old constant.
+
+Process killed afterwards; port 3000 confirmed free.
+
+---
+
+## ✅ Milestone M1 — Economy core: COMPLETE (reviewed and committed, `78b0ffd`)
 
 **M1a — Economy foundations**, **M1b — Auth & account lifecycle**, **M1c — Base screen &
 i18n** are all done and independently verified. Per-step detail is above.
@@ -996,20 +1081,20 @@ i18n** are all done and independently verified. Per-step detail is above.
    every profile, login frequency no longer separates them. Deferred to M4, where `tools/sim`
    tunes constants with raiding, NPCs and the map actually modelled — raid income is the
    differentiator the contract assumes and M1 cannot yet provide.
-2. **Open design question: what a new settlement starts with** — today the only legal first
-   build is the Greenhouse. Owner decision pending (see Open questions).
+2. ~~Open design question: what a new settlement starts with~~ — **resolved by the owner
+   (2026-08-16): option (a), Command Center L1 only.** The Greenhouse being the only legal
+   first build is intended. Recorded in `docs/M1_DESIGN_DECISIONS.md` §4.
 3. Influence **UI/gating** and Market functionality are M2 by plan (they need map movement);
    `calcInfluence` / `settlementsAllowed` already back the settlement-limit check.
 4. Telegram auth is a **stub behind the real interface**; guest auth carries M1–M6.
-5. Server CORS origin and `version` are still hardcoded/unset under pm2 (M0 debt, unchanged).
-6. **CI has still never run on GitHub** (nothing pushed). The Mongo-binary cache added in
-   M1a.8 is validated by parsing and by checking the cache key resolves — not by a real run.
-
-**Nothing has been committed** — all of M1 sits in the working tree for the user's review.
+5. ~~Server CORS origin and `version` are hardcoded/unset under pm2~~ — **fixed in the
+   post-M1 debt sweep** (`CORS_ORIGINS` env + `SERVER_VERSION` constant with a drift test).
+6. ~~CI has never run on GitHub~~ — **it has: two runs, both green, the latest on `78b0ffd`
+   (the full M1 tree).** Verified against the Actions API; details in the debt-sweep entry.
 
 ---
 
-## ✅ Milestone M0 — Scaffold: COMPLETE (awaiting user review)
+## ✅ Milestone M0 — Scaffold: COMPLETE (reviewed and committed, `d794a3e`)
 
 **What was built.** A pnpm TypeScript monorepo with three wired packages:
 
@@ -1058,14 +1143,19 @@ servers; the web app calls the API through the proxy and renders the result. ✅
 6. CI has never actually executed on GitHub (nothing pushed yet). The first push should be
    watched.
 
-**Nothing has been committed** — the whole scaffold sits in the working tree for the user's
-personal review and commit.
-
 ---
 
-## Open questions for the owner (design decisions, not invented here)
+## Owner decisions — the M1 open questions, now closed
 
-### 1. What does a brand-new settlement start with?
+Both were parked here as questions during M1 and **answered by the owner on 2026-08-16**.
+Kept (rather than deleted) so the reasoning behind each answer survives.
+
+### 1. What does a brand-new settlement start with? — **RESOLVED: option (a), accept as is**
+
+**Decision:** a new settlement starts with the **Command Center at level 1 and nothing else**.
+The Greenhouse Farm being the only legal first build is intended, not a gap. Binding record:
+`docs/M1_DESIGN_DECISIONS.md` §4. No code change was needed — the shipped behaviour already
+matches. The original analysis follows.
 
 **Observed, on the real API:** a settlement created with only a **Command Center at level 1**
 is **already net-negative on Food** (the Command Center has hourly Food upkeep; nothing
@@ -1090,11 +1180,13 @@ that a new player's only legal first action is "build the Greenhouse". Options, 
 - **(c) Make the gate relative** — block an upgrade only if it makes an already-negative Food
   balance *worse*, rather than blocking whenever the result is negative.
 
-This is a product decision, so it is parked here rather than resolved. It does not block M1.
-
-### 2. Hardcore progression band (balance, deferred by plan)
+### 2. Hardcore progression band — **RESOLVED: deferral to M4 confirmed**
 
 After M1a.4b the Casual and Regular reference players land **in band** at every checkpoint, but
 Hardcore stays **1–2 levels short** (day 21: 16 vs the 17–18 target). Deferred to M4 by design
 — that is where `tools/sim` tunes the constants against this same contract, with raiding, NPCs
 and the map actually modelled. Flagged so it is a conscious deferral rather than a silent miss.
+
+**Owner's answer (2026-08-16):** confirmed — do not chase the bands now. Tuning the curves
+against a model that lacks the differentiator the contract assumes (raid income) would only
+have to be redone in M4.
