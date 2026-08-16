@@ -25,6 +25,9 @@ describe('Auth (integration)', () => {
   beforeAll(async () => {
     replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     process.env['MONGODB_URI'] = replSet.getUri('last-signal-auth-test');
+    // This suite doesn't exercise NPC seeding — disabling it keeps boot fast and keeps the
+    // `accounts` collection limited to the accounts this file itself creates.
+    process.env['WORLD_NPC_COUNT'] = '0';
 
     const moduleRef: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -44,6 +47,7 @@ describe('Auth (integration)', () => {
     await app.close();
     await replSet.stop();
     delete process.env['MONGODB_URI'];
+    delete process.env['WORLD_NPC_COUNT'];
   }, 60_000);
 
   afterEach(async () => {

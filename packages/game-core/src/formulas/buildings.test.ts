@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../config/index.js';
 import type { BuildingLevels, GameConfig } from '../config/types.js';
+import { calcTroopFoodUpkeepPerHour, type TroopCounts } from '../units/index.js';
 import {
   calcBuildCost,
   calcBuildTimeMs,
@@ -14,6 +15,7 @@ import {
   missingPrerequisites,
   settlementsAllowed,
   wouldStarveSettlement,
+  wouldStarveWithTroops,
 } from './buildings.js';
 
 const config = DEFAULT_CONFIG;
@@ -276,6 +278,93 @@ describe('food upkeep and net food', () => {
     const snapshot = buildings.map((b) => ({ ...b }));
     wouldStarveSettlement(config, buildings, 'commandCenter', 16);
     expect(buildings).toEqual(snapshot);
+  });
+});
+
+describe('troop Food upkeep in net Food (§7)', () => {
+  it('omitting troops behaves exactly like an empty troop list', () => {
+    const buildings: BuildingLevels = [{ type: 'greenhouseFarm', level: 3 }];
+    expect(calcNetFoodPerHour(config, buildings)).toBe(calcNetFoodPerHour(config, buildings, []));
+  });
+
+  it('subtracts exactly the troop-list Food upkeep from net Food', () => {
+    const buildings: BuildingLevels = [{ type: 'greenhouseFarm', level: 5 }];
+    const troops: TroopCounts = [
+      { unitType: 'lookout', count: 4 },
+      { unitType: 'falconer', count: 2 },
+    ];
+    const withoutTroops = calcNetFoodPerHour(config, buildings);
+    const withTroops = calcNetFoodPerHour(config, buildings, troops);
+    expect(withTroops).toBeCloseTo(withoutTroops - calcTroopFoodUpkeepPerHour(config, troops), 9);
+  });
+});
+
+describe('wouldStarveWithTroops (the training gate, §7)', () => {
+  it('accepts a batch the settlement can comfortably feed', () => {
+    const buildings: BuildingLevels = [{ type: 'greenhouseFarm', level: 10 }];
+    expect(wouldStarveWithTroops(config, buildings, [], [{ unitType: 'lookout', count: 1 }])).toBe(
+      false,
+    );
+  });
+
+  it('rejects a batch too large for net Food but accepts one just under the limit', () => {
+    const buildings: BuildingLevels = [{ type: 'greenhouseFarm', level: 1 }]; // 30/h food, no upkeep
+    const netFood = calcNetFoodPerHour(config, buildings);
+    const upkeepPerUnit = config.units.lookout.foodUpkeepPerHour;
+    const tooMany = Math.ceil(netFood / upkeepPerUnit) + 5;
+    const fitsComfortably = Math.floor(netFood / upkeepPerUnit) - 1;
+
+    expect(
+      wouldStarveWithTroops(config, buildings, [], [{ unitType: 'lookout', count: tooMany }]),
+    ).toBe(true);
+    expect(
+      wouldStarveWithTroops(
+        config,
+        buildings,
+        [],
+        [{ unitType: 'lookout', count: fitsComfortably }],
+      ),
+    ).toBe(false);
+  });
+
+  it('is absolute: a settlement already net-negative can never train, even a batch of 0', () => {
+    // Same starving combination as the `calcNetFoodPerHour` "goes negative" case above.
+    const buildings: BuildingLevels = [
+      { type: 'greenhouseFarm', level: 1 },
+      { type: 'commandCenter', level: 16 },
+    ];
+    expect(calcNetFoodPerHour(config, buildings)).toBeLessThan(0);
+    expect(wouldStarveWithTroops(config, buildings, [], [])).toBe(true);
+    expect(wouldStarveWithTroops(config, buildings, [], [{ unitType: 'lookout', count: 1 }])).toBe(
+      true,
+    );
+  });
+
+  it('accounts for troops already at home, not just the added batch', () => {
+    const buildings: BuildingLevels = [{ type: 'greenhouseFarm', level: 1 }]; // 30/h food
+    const netFood = calcNetFoodPerHour(config, buildings);
+    const upkeepPerUnit = config.units.lookout.foodUpkeepPerHour;
+    // Leave just under 5 units' worth of Food headroom after the existing troops' own upkeep.
+    const existingCount = Math.floor(netFood / upkeepPerUnit) - 5;
+    const existing: TroopCounts = [{ unitType: 'lookout', count: existingCount }];
+
+    expect(
+      wouldStarveWithTroops(config, buildings, existing, [{ unitType: 'lookout', count: 4 }]),
+    ).toBe(false);
+    expect(
+      wouldStarveWithTroops(config, buildings, existing, [{ unitType: 'lookout', count: 6 }]),
+    ).toBe(true);
+  });
+
+  it('does not mutate either troop list', () => {
+    const buildings: BuildingLevels = [{ type: 'greenhouseFarm', level: 5 }];
+    const troops: TroopCounts = [{ unitType: 'lookout', count: 2 }];
+    const added: TroopCounts = [{ unitType: 'falconer', count: 1 }];
+    const troopsSnapshot = troops.map((t) => ({ ...t }));
+    const addedSnapshot = added.map((t) => ({ ...t }));
+    wouldStarveWithTroops(config, buildings, troops, added);
+    expect(troops).toEqual(troopsSnapshot);
+    expect(added).toEqual(addedSnapshot);
   });
 });
 

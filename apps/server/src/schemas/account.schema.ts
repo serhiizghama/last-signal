@@ -34,6 +34,16 @@ export class Account {
   @Prop({ type: Boolean, required: true, default: true })
   isGuest!: boolean;
 
+  // True for the ~135 inert accounts `NpcSeederService` creates at world start (M2a.5,
+  // `docs/M2_DESIGN_DECISIONS.md` §4) — never set by any human-facing path. Exists so the
+  // seeder can tell "already seeded" apart from "not yet" without a second collection, and
+  // so M4's behaviour engine knows which accounts to tick. Deliberately excluded from
+  // `AccountView`/every other client-facing shape (see that view's own comment) — an NPC
+  // must be indistinguishable from a human in the game, so this field must never reach a
+  // response body.
+  @Prop({ type: Boolean, required: true, default: false, index: true })
+  isNpc!: boolean;
+
   @Prop({ type: String, enum: FACTIONS })
   faction?: Faction;
 

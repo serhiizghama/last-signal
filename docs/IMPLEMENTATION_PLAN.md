@@ -3,7 +3,8 @@
 A browser-based, mobile-first, real-time strategy game inspired by classic Travian mechanics,
 re-themed as a post-apocalyptic world. Players (and indistinguishable NPC accounts) develop
 settlements, raid each other, pick a global side — **Beacon** or **Silence** — and fight over
-the **Signal Source** at the center of the map in a 3-week seasonal round.
+the **Signal Source** that surfaces in the heart of the settled world in a 3-week seasonal
+round.
 
 Solo pet project, portfolio-grade quality. No monetization, ever.
 
@@ -16,7 +17,7 @@ Solo pet project, portfolio-grade quality. No monetization, ever.
 | Audience | Self + ~15 friends per world; public GitHub repo, CI, version tags |
 | Platform | Mobile-first web app; architecture ready for a Telegram Mini App wrapper later |
 | World size | 61×61 grid (3,721 tiles), ~150 total accounts (~15 human + ~135 NPC) |
-| Round | 3 weeks; three acts; full world wipe at the end. Speed: base curves at classic x1, per-domain `SPEED` multipliers on top (`build`/`production`/`training` = 5, `travel` ≈ 2–3 tuned to "2–4 h across half the map") |
+| Round | 3 weeks; three acts; full world wipe at the end. Speed: base curves at classic x1, per-domain `SPEED` multipliers on top (`build`/`production`/`training` = 5, `travel` = 2 — pinned draft, config knob, tuned to "2–4 h across half the map"; see `docs/M2_DESIGN_DECISIONS.md` §0) |
 | Persistence across rounds | Account keeps history, medals, past-season contribution ratings |
 | Factions (race analog) | Raiders (cheap mass army), Engineers (expensive strong units, fast builds), Nomads (fast, defensive) |
 | Resources | Scrap, Fuel, Electronics, Food. Role-based (Scrap = mass/structures, Fuel = vehicles/speed, Electronics = scarce tech gate, Food = upkeep/expansion). Food is in every build cost AND consumed hourly by building levels + troops; troop starvation kills (weakest first) |
@@ -124,13 +125,22 @@ per account per round in v1.
 
 ### 2.5 Map & world
 
-- 61×61 grid. Terrain: wasteland variants, ruined city, dead forest, toxic lake,
-  broken highway, rocky hills (visual + minor movement modifiers later; v1: cosmetic).
-- **Signal Source** occupies the center (3×3 visual footprint, one logical tile).
+- 61×61 grid, **bounded** (coordinates −30..30, no wrap-around); the distance metric is
+  **Chebyshev** (`d = max(|dx|, |dy|)`). Terrain: wasteland variants, ruined city, dead
+  forest, toxic lake, broken highway, rocky hills — derived from the world seed, cosmetic
+  in v1 with one exception: toxic lake tiles cannot host a settlement.
+- **Signal Source**: no location until the Act 2 reveal, which places it at a computed
+  balanced point (roughly the population-weighted middle of the settled world). The
+  placement algorithm, the reveal event and what the tile blocks are owned by M5; until
+  then `world.source` is null and the map centre is ordinary, settleable terrain.
 - **Farm oases**: NPC-held surviving farms scattered on the map — raid targets with
-  Food loot (not annexable in v1).
-- Humans spawn in the outer ring on registration; NPCs are pre-seeded across the map
-  at world start with staggered development levels.
+  Food loot (not annexable in v1). Placed at world generation; defenders, loot and
+  raiding arrive with combat (M3).
+- **Spawn — one policy for everyone:** a settlement is placed at random inside an annulus
+  of Chebyshev radius that expands from the centre outwards as the world fills
+  (Travian-style ring growth). NPCs are seeded through this same policy first, at world
+  start, so humans registering later land in the outer band as an emergent property
+  rather than a special rule.
 - Travel time = distance / unit speed (slowest unit in the army), ~2–4 h across half
   the map for average units.
 
@@ -144,7 +154,13 @@ Adapted classic Travian battle system (public Kirilloid formulas as the base), s
   **Assault** (full battle; with siege units — destroys targeted building levels; Wall
   must fall first).
 - Scouting: scout-vs-scout resolution; report shows resources, troops, buildings
-  depending on Radio Tower differential.
+  depending on Radio Tower differential. Resolved detail (M2 record §8): attacker
+  losses follow a 1.5-power casualty curve `min(1, (defPts/atkPts)^1.5)`, defender
+  scouts never die on defence; the base report always carries the target's resources,
+  storage caps and home troop counts, and a Radio Tower differential ≥ 1 adds the
+  building list; the defender gets a counter-report only if they had a scout at home;
+  a mission that loses every scout still returns an empty "no survivors" report
+  (deliberate deviation from Travian, which returns nothing).
 - Defenders can station support troops in other settlements (own or anyone's).
 - **Beginner protection: 72 h** (no incoming attacks; ends early if the player attacks).
 - Battle reports for both parties; Telegram push for incoming attacks.
@@ -224,13 +240,16 @@ Collections:
 - `settlements` — accountId, x, y, buildings[{type, level}], resources snapshot
   (`{values, lastCalcAt}`), buildQueue, troops (home + stationed), influence
 - `movements` — from, to, type (raid/assault/scout/support/settle/trade), units,
-  departAt, arriveAt; processed by the scheduler at `arriveAt`
+  departAt, arriveAt, status, survivors; processed by the scheduler at `arriveAt`
+- `oases` — farm oases placed at world generation (`{x, y, type}`; defenders and loot
+  from M3)
 - `events` — `{type, dueAt, payload, status}`, index `{status, dueAt}`; the single
   source of "things that happen at a moment in time" (arrivals, build completions,
   NPC ticks, act transitions, starvation checks)
 - `reports` — battle/scout reports per account
-- `world` — singleton: round number, act, source control state
-  `{holderSide, holderSince, accumulated: {beacon, silence}}`, timeline
+- `world` — singleton: seed (terrain is derived from it, never stored per tile), round
+  number, act, source control state `{holderSide, holderSince, accumulated: {beacon,
+  silence}}` (null until the Act 2 reveal places the Source), timeline
 - `seasons` — archived final rankings per round
 
 ### 3.3 Event scheduler
@@ -305,17 +324,25 @@ bar; all design inputs are fixed in `docs/M1_DESIGN_DECISIONS.md`):
   build queue UI, live resource bar, i18n scaffold (RU) + migration of M0's hardcoded
   strings. *Accept: a player can grow a settlement end-to-end in the browser.*
 
-Deferred out of M1: Influence UI/gating and Market functionality (both M2 — they need
-map movement).
+Deferred out of M1: Influence display (M2 — §9 of the M2 record), Influence-gated
+founding with settler convoys and Market functionality (both M3 — they need movement
+types M2 does not ship).
 
-**M2 — Map & movement.** World generation (terrain, Source placeholder, farm oases,
-NPC seeding stub), map UI with pan/zoom, movements + arrivals via scheduler, scouting
-with reports. *Accept: scout another settlement from the map and read the report.*
+**M2 — Map & movement.** World generation (seed-derived terrain, farm oases, ~135 inert
+NPC accounts seeded through the new center-out spawn policy), map UI with pan/zoom,
+movements + arrivals via the scheduler — **scout is the only movement type** — a
+scout-only slice of the training system (players build their own scouts), scouting with
+reports, and Influence displayed on the base screen. All design inputs are fixed in
+`docs/M2_DESIGN_DECISIONS.md`; the M2a/M2b/M2c split lives in its §13. *Accept: scout
+another settlement from the map and read the report.*
 
 **M3 — Combat.** Battle engine in game-core (raid/assault, wall, siege destruction,
-carry capacity, starvation), troop training, support stationing, beginner protection,
-battle reports UI, Telegram notifications. *Accept: two test accounts fight; results
-match hand-computed formula cases; TG push received.*
+carry capacity, starvation), training of the remaining 12 units (scouts shipped in M2),
+support stationing, settler convoys + Influence-gated founding, Market/trade with
+merchants, oasis defenders/loot/scouting, incoming-movement visibility (with Radio Tower
+controlling detail), beginner protection (covers scouting as well as attacks), battle
+reports UI, Telegram notifications. *Accept: two test accounts fight; results match
+hand-computed formula cases; TG push received.*
 
 **M4 — NPCs.** Profiles (Settler/Marauder), tick scheduling, world seeded with ~135
 NPCs, sim harness runs 21 days headless, first balance pass. *Accept: sim report looks

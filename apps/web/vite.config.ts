@@ -15,6 +15,15 @@ export default defineConfig({
         target: API_PROXY_TARGET,
         changeOrigin: true,
       },
+      // The realtime gateway (`RealtimeGateway`, M2b.4) listens on this same path — `ws: true`
+      // is what makes Vite proxy the websocket upgrade itself, not just plain HTTP requests to
+      // it (an `/api`-style proxy entry alone would leave the handshake never reaching the API
+      // server in dev).
+      '/ws': {
+        target: API_PROXY_TARGET,
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
   test: {

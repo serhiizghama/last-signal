@@ -18,6 +18,10 @@ describe('i18n config', () => {
     );
   });
 
+  it('loads the reports namespace', () => {
+    expect(i18n.t('title', { ns: 'reports' })).toBe('Отчёты');
+  });
+
   it('renders the correct Russian plural form for 1 / 3 / 5', () => {
     expect(i18n.t('base.buildingsCount', { count: 1 })).toBe('1 постройка');
     expect(i18n.t('base.buildingsCount', { count: 3 })).toBe('3 постройки');

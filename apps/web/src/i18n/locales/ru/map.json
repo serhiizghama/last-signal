@@ -1,0 +1,56 @@
+{
+  "title": "Карта",
+  "worldInfo": "Раунд {{round}}, акт {{act}}",
+  "viewport": "Карта мира",
+  "zoomIn": "Приблизить",
+  "zoomOut": "Отдалить",
+  "zoomLevel": "Масштаб: {{scale}}×",
+  "recentre": "К моему поселению",
+  "jumpLabel": "Перейти к координатам",
+  "jumpX": "X",
+  "jumpY": "Y",
+  "jumpSubmit": "Перейти",
+  "jumpInvalid": "Координаты вне карты",
+  "ownSettlement": "Ваше поселение",
+  "settlementLabel": "Поселение «{{name}}» ({{owner}})",
+  "oasisLabel": "Оазис",
+  "terrain": {
+    "wasteland": "Пустошь",
+    "deadForest": "Мёртвый лес",
+    "rockyHills": "Скалистые холмы",
+    "ruinedCity": "Руины города",
+    "brokenHighway": "Разбитое шоссе",
+    "toxicLake": "Токсичное озеро"
+  },
+  "sheet": {
+    "title": "Информация о клетке",
+    "close": "Закрыть",
+    "coordinates": "Координаты: {{x}}:{{y}}",
+    "terrainLabel": "Местность: {{terrain}}",
+    "emptyTitle": "Пустая клетка",
+    "oasisTitle": "Оазис",
+    "oasisType": {
+      "farm": "Пищевой оазис"
+    },
+    "oasisNoScout": "Оазисы нельзя разведать в этом раунде.",
+    "ownSettlementNote": "Это ваше поселение.",
+    "settlementOwner": "Владелец: {{owner}}"
+  },
+  "scout": {
+    "action": "Разведать",
+    "unitCountLabel": "Разведчики: {{name}}",
+    "available": "Доступно дома: {{count}}",
+    "travelTime": "Время в пути: {{duration}}",
+    "submit": "Отправить в разведку",
+    "noScoutsAtHome": "Нет разведчиков дома."
+  },
+  "movements": {
+    "title": "Мои походы",
+    "outboundStatus": "В пути",
+    "returningStatus": "Возвращаются",
+    "arrivesIn": "Прибытие через {{duration}}",
+    "homeIn": "Возвращение через {{duration}}",
+    "target": "Цель: {{x}}:{{y}}",
+    "cancel": "Отменить поход"
+  }
+}

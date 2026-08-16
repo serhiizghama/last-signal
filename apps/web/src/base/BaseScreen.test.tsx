@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { BuildingLevels, UnitType } from '@last-signal/game-core';
 import {
   DEFAULT_CONFIG,
   calcBuildCost,
@@ -10,6 +11,9 @@ import {
   calcNetFoodPerHour,
   calcNetRates,
   calcStorageCaps,
+  floorForDisplay,
+  settleResources,
+  wouldStarveSettlement,
 } from '@last-signal/game-core';
 
 import type {
@@ -17,8 +21,10 @@ import type {
   SettlementBuildingView,
   SettlementBuildQueueItemView,
   SettlementStateView,
+  SettlementTroopView,
 } from '../api/types';
 import { Onboarding } from '../onboarding/Onboarding';
+import { toTroopCounts } from './settlementSelectors';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return {
@@ -60,6 +66,10 @@ const BASE_CAPS = calcStorageCaps(DEFAULT_CONFIG, BASE_LEVELS);
 function settlementFixture(overrides: Partial<SettlementStateView> = {}): SettlementStateView {
   const buildings = overrides.buildings ?? BASE_BUILDINGS;
   const levels = buildings.map((b) => ({ type: b.type, level: b.level }));
+  // Real troops, not an implicit `[]` — a fixture that overrides `troops` but not
+  // `ratesPerHour`/`netFoodPerHour` directly must still get numbers that reflect them,
+  // exactly the correctness fix under test below (see "accounts for troop Food upkeep...").
+  const troops = toTroopCounts(overrides.troops ?? []);
   return {
     id: 'set-1',
     name: 'Форт Скитальца',
@@ -67,10 +77,12 @@ function settlementFixture(overrides: Partial<SettlementStateView> = {}): Settle
     y: 34,
     buildings,
     resources: { values: { scrap: 100, fuel: 100, electronics: 100, food: 300 }, lastCalcAt: 0 },
-    ratesPerHour: calcNetRates(DEFAULT_CONFIG, levels),
-    netFoodPerHour: calcNetFoodPerHour(DEFAULT_CONFIG, levels),
+    ratesPerHour: calcNetRates(DEFAULT_CONFIG, levels, troops),
+    netFoodPerHour: calcNetFoodPerHour(DEFAULT_CONFIG, levels, troops),
     storageCaps: calcStorageCaps(DEFAULT_CONFIG, levels),
     buildQueue: [],
+    troops: [],
+    trainingQueue: [],
     influence: 0,
     serverTime: 0,
     ...overrides,
@@ -110,6 +122,14 @@ function stubFetch(
       }
       if (method === 'GET' && url === '/api/settlements/mine') {
         return Promise.resolve(jsonResponse([settlement]));
+      }
+      // `BottomNav` (rendered by `BaseScreen`) queries this itself for the Reports tab's
+      // unread badge (M2c.3) — none of this file's tests care about reports, so a stable empty
+      // inbox keeps every existing scenario unaffected.
+      if (method === 'GET' && url.startsWith('/api/reports')) {
+        return Promise.resolve(
+          jsonResponse({ reports: [], nextCursor: null, unreadCount: 0, serverTime: 0 }),
+        );
       }
       return Promise.reject(new Error(`Unhandled request: ${key}`));
     }),
@@ -170,6 +190,27 @@ function buildingCard(name: string): HTMLElement {
     throw new Error(`No .building-card ancestor for "${name}"`);
   }
   return card as HTMLElement;
+}
+
+// The minimal count of `unitType` such that its Food upkeep alone (on top of `buildings`,
+// no other troops) tips `type`'s next build at `targetLevel` into the Food gate — derived
+// from the live `game-core` config, never a hardcoded number. Mirrors
+// `pickStarvingTrainCount` in `settlements.integration.spec.ts` (server side) for the same
+// reason: whatever the config's upkeep numbers happen to be tuned to, this fixture stays
+// correct.
+function pickStarvingTroopCount(
+  buildings: BuildingLevels,
+  type: SettlementBuildingView['type'],
+  targetLevel: number,
+  unitType: UnitType,
+): number {
+  for (let count = 1; count <= 1000; count += 1) {
+    const troops = [{ unitType, count }];
+    if (wouldStarveSettlement(DEFAULT_CONFIG, buildings, type, targetLevel, troops)) {
+      return count;
+    }
+  }
+  throw new Error('pickStarvingTroopCount: no starving count found within 1000');
 }
 
 beforeEach(() => {
@@ -477,5 +518,47 @@ describe('BaseScreen', () => {
     const button = card.querySelector('button');
     expect(button).toBeDisabled();
     expect(card.textContent).toContain('Очередь построек заполнена.');
+  });
+
+  it('accounts for troop Food upkeep in both the live resource tick and build eligibility', async () => {
+    // Greenhouse Farm L1 is buildable on `BASE_BUILDINGS` with no troops at home (see
+    // "starting a build calls the build endpoint..." above) — its own Food production is
+    // what keeps it just on the safe side of the gate. `pickStarvingTroopCount` finds the
+    // smallest home-scout count whose upkeep alone (nothing else changes) tips that same
+    // build into `wouldStarve`, derived from the live config rather than a hardcoded number.
+    const troopCount = pickStarvingTroopCount(BASE_LEVELS, 'greenhouseFarm', 1, 'lookout');
+    const troops: SettlementTroopView[] = [{ unitType: 'lookout', count: troopCount }];
+    const settlement = settlementFixture({ troops });
+    const { container } = renderBase(settlement);
+    await flushLoad();
+
+    // Eligibility: `computeBuildEligibility`'s Food gate must now see these troops (via
+    // `live.troops`, threaded from `useLiveResources`) — without the fix this button would
+    // still read enabled, exactly like the no-troops fixture does.
+    const card = buildingCard('Теплица');
+    const button = card.querySelector('button');
+    expect(button).toBeDisabled();
+    expect(card.textContent).toContain('Эта постройка приведёт к нехватке еды.');
+
+    // Live tick: the Food value must decay at the troop-inclusive net rate — computed
+    // independently here via `settleResources` (the exact function `useLiveResources`
+    // calls), never a hardcoded number. Without the fix, `useLiveResources` would tick Food
+    // at the buildings-only rate and this would fail.
+    const elapsedMs = 60_000;
+    const expectedFood = settleResources(
+      DEFAULT_CONFIG,
+      BASE_LEVELS,
+      { values: settlement.resources.values, lastCalcAt: settlement.resources.lastCalcAt },
+      elapsedMs,
+      toTroopCounts(troops),
+    ).values.food;
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(elapsedMs);
+    });
+
+    expect(resourceTileValue(container, 'food')).toBe(
+      floorForDisplay(expectedFood).toLocaleString('ru-RU'),
+    );
   });
 });

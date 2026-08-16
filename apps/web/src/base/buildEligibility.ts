@@ -4,6 +4,7 @@ import type {
   BuildingType,
   GameConfig,
   Resources,
+  TroopCounts,
 } from '@last-signal/game-core';
 import {
   RESOURCE_KINDS,
@@ -48,7 +49,11 @@ export interface BuildEligibility {
  * comes straight from a `game-core` formula; this function only orders the checks, mirroring
  * `SettlementsService.startBuild`'s own validation order (max level, prerequisites, queue
  * capacity, the Food gate, storage, then affordability) so the client never disables a
- * building for a different reason than the server would reject it for.
+ * building for a different reason than the server would reject it for. `troops` is threaded
+ * into the Food gate and the affordability wait-time the same way the server's own build gate
+ * does (M2b §7 correctness fix) — a settlement with scouts at home must see the same
+ * wouldStarve/neverAffordable verdict the server would compute, not one that ignores their
+ * upkeep.
  */
 export function computeBuildEligibility(
   config: GameConfig,
@@ -57,6 +62,7 @@ export function computeBuildEligibility(
   liveValues: Resources,
   now: number,
   type: BuildingType,
+  troops: TroopCounts,
 ): BuildEligibility {
   const currentLevel = levelOf(buildings, type);
   const targetLevel = nextTargetLevel(buildings, buildQueue, type);
@@ -105,7 +111,7 @@ export function computeBuildEligibility(
     };
   }
 
-  if (wouldStarveSettlement(config, buildings, type, targetLevel)) {
+  if (wouldStarveSettlement(config, buildings, type, targetLevel, troops)) {
     return {
       type,
       currentLevel,
@@ -158,6 +164,7 @@ export function computeBuildEligibility(
     buildings,
     { values: liveValues, lastCalcAt: now },
     cost,
+    troops,
   );
   if (waitMs === null) {
     return {

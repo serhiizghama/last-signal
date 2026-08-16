@@ -14,6 +14,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { CurrentAccount } from '../auth/current-account.decorator';
 import type { AccountDocument } from '../schemas/account.schema';
 import { StartBuildDto } from './dto/start-build.dto';
+import { TrainScoutsDto } from './dto/train-scouts.dto';
 import { SettlementsService } from './settlements.service';
 import type { SettlementStateView } from './settlements.view';
 
@@ -70,5 +71,25 @@ export class SettlementsController {
     @Param('queueItemId') queueItemId: string,
   ): Promise<SettlementStateView> {
     return this.settlementsService.cancelBuild(id, account._id, queueItemId, Date.now());
+  }
+
+  // 200, not 201, same rationale as `startBuild` above. No cancel counterpart exists for
+  // training (see `MAX_ACTIVE_TRAINING_ORDERS`'s comment in `settlements.constants.ts`) —
+  // this is the only training route this controller ever gains in M2b.
+  @Post(':id/train')
+  @HttpCode(HttpStatus.OK)
+  async trainScouts(
+    @CurrentAccount() account: AccountDocument,
+    @Param('id') id: string,
+    @Body() dto: TrainScoutsDto,
+  ): Promise<SettlementStateView> {
+    return this.settlementsService.trainScouts(
+      id,
+      account._id,
+      account.faction,
+      dto.unitType,
+      dto.count,
+      Date.now(),
+    );
   }
 }

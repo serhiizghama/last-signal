@@ -4,7 +4,10 @@ import { initReactI18next } from 'react-i18next';
 import buildingsRu from './locales/ru/buildings.json';
 import commonRu from './locales/ru/common.json';
 import errorsRu from './locales/ru/errors.json';
+import mapRu from './locales/ru/map.json';
+import reportsRu from './locales/ru/reports.json';
 import resourcesRu from './locales/ru/resources.json';
+import unitsRu from './locales/ru/units.json';
 
 /**
  * Russian is the only shipped locale for now (English lands in M6). Namespaces mirror the
@@ -18,6 +21,13 @@ export const resources = {
     buildings: buildingsRu,
     resources: resourcesRu,
     errors: errorsRu,
+    map: mapRu,
+    // Reserved by M1 §15, filled in by M2c.2's send-scout flow and movements overlay (unit
+    // names for the three faction scouts — the only units the catalogue has until M3).
+    units: unitsRu,
+    // Reserved by M1 §15, filled in by M2c.3's Reports tab (§8/§11): every scout-report string
+    // the client renders from the server's structured `payload`.
+    reports: reportsRu,
   },
 } as const;
 

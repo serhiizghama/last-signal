@@ -1,5 +1,5 @@
-import type { BuildingLevels, BuildingType } from '@last-signal/game-core';
-import { BUILDING_TYPES, SETTLEMENT_SLOTS } from '@last-signal/game-core';
+import type { BuildingLevels, BuildingType, TroopCounts, UnitType } from '@last-signal/game-core';
+import { BUILDING_TYPES, SETTLEMENT_SLOTS, UNIT_TYPES } from '@last-signal/game-core';
 
 import type { BuildingSlot } from '../schemas/settlement.schema';
 
@@ -10,6 +10,12 @@ export function isBuildingType(value: string): value is BuildingType {
   return (BUILDING_TYPES as readonly string[]).includes(value);
 }
 
+// Same narrowing as `isBuildingType`, for `Settlement.troops[].unitType` /
+// `trainScouts`'s request body — the schema comment on `SettlementTroopEntry` points here.
+export function isUnitType(value: string): value is UnitType {
+  return (UNIT_TYPES as readonly string[]).includes(value);
+}
+
 // Adapts a settlement's persisted building list (`{id, type, level, slot}`, `type: string`)
 // to the `BuildingLevels` shape every game-core formula accepts. Callers are expected to
 // have already validated `type` via `isBuildingType` upstream (e.g. DTO/command validation);
@@ -18,6 +24,18 @@ export function toBuildingLevels(
   buildings: ReadonlyArray<{ type: string; level: number }>,
 ): BuildingLevels {
   return buildings.map((b) => ({ type: b.type as BuildingType, level: b.level }));
+}
+
+// Adapts a settlement's persisted troop list (`{unitType, count}`, `unitType: string`) to
+// the `TroopCounts` shape every game-core economy formula now accepts (§7's Food-upkeep
+// hook: `calcNetRates`, `calcNetFoodPerHour`, `settleResources`, `wouldStarveSettlement`).
+// Same "pure reshape, caller already validated" contract as `toBuildingLevels` above —
+// entries here are only ever written by `TrainingCompleteHandler` and `NpcSeederService`,
+// both of which only ever write real `UnitType` values.
+export function toTroopCounts(
+  troops: ReadonlyArray<{ unitType: string; count: number }>,
+): TroopCounts {
+  return troops.map((t) => ({ unitType: t.unitType as UnitType, count: t.count }));
 }
 
 // Current level of `type` in `buildings`, or 0 when the building hasn't been built yet.

@@ -1,0 +1,709 @@
+[
+  {
+    "id": "battle.defeat",
+    "path": "/assets/battle/defeat.png",
+    "source": "battle_art.png",
+    "width": 144,
+    "height": 160
+  },
+  {
+    "id": "battle.victory",
+    "path": "/assets/battle/victory.png",
+    "source": "battle_art.png",
+    "width": 145,
+    "height": 160
+  },
+  {
+    "id": "brand.hero_landing",
+    "path": "/assets/brand/hero_landing.png",
+    "source": "hero_landing.png",
+    "width": 1536,
+    "height": 1024
+  },
+  {
+    "id": "brand.logo",
+    "path": "/assets/brand/logo.png",
+    "source": "logo_title.png",
+    "width": 555,
+    "height": 320
+  },
+  {
+    "id": "building.barracks",
+    "path": "/assets/buildings/barracks.png",
+    "source": "buildings_2.png",
+    "width": 96,
+    "height": 84
+  },
+  {
+    "id": "building.cold_storage",
+    "path": "/assets/buildings/cold_storage.png",
+    "source": "buildings_2.png",
+    "width": 96,
+    "height": 91
+  },
+  {
+    "id": "building.command_center",
+    "path": "/assets/buildings/command_center.png",
+    "source": "buildings_1.png",
+    "width": 95,
+    "height": 96
+  },
+  {
+    "id": "building.greenhouse",
+    "path": "/assets/buildings/greenhouse.png",
+    "source": "buildings_1.png",
+    "width": 96,
+    "height": 85
+  },
+  {
+    "id": "building.machine_shop",
+    "path": "/assets/buildings/machine_shop.png",
+    "source": "buildings_2.png",
+    "width": 96,
+    "height": 90
+  },
+  {
+    "id": "building.market",
+    "path": "/assets/buildings/market.png",
+    "source": "buildings_2.png",
+    "width": 96,
+    "height": 69
+  },
+  {
+    "id": "building.radio_tower",
+    "path": "/assets/buildings/radio_tower.png",
+    "source": "buildings_2.png",
+    "width": 77,
+    "height": 96
+  },
+  {
+    "id": "building.refinery",
+    "path": "/assets/buildings/refinery.png",
+    "source": "buildings_1.png",
+    "width": 90,
+    "height": 96
+  },
+  {
+    "id": "building.scrap_yard",
+    "path": "/assets/buildings/scrap_yard.png",
+    "source": "buildings_1.png",
+    "width": 94,
+    "height": 96
+  },
+  {
+    "id": "building.wall",
+    "path": "/assets/buildings/wall.png",
+    "source": "buildings_2.png",
+    "width": 68,
+    "height": 64
+  },
+  {
+    "id": "building.warehouse",
+    "path": "/assets/buildings/warehouse.png",
+    "source": "buildings_1.png",
+    "width": 96,
+    "height": 85
+  },
+  {
+    "id": "building.workshop",
+    "path": "/assets/buildings/workshop.png",
+    "source": "buildings_1.png",
+    "width": 96,
+    "height": 91
+  },
+  {
+    "id": "emblem.faction.engineers",
+    "path": "/assets/emblems/faction/engineers.png",
+    "source": "faction_emblems.png",
+    "width": 94,
+    "height": 96
+  },
+  {
+    "id": "emblem.faction.nomads",
+    "path": "/assets/emblems/faction/nomads.png",
+    "source": "faction_emblems.png",
+    "width": 93,
+    "height": 96
+  },
+  {
+    "id": "emblem.faction.raiders",
+    "path": "/assets/emblems/faction/raiders.png",
+    "source": "faction_emblems.png",
+    "width": 96,
+    "height": 94
+  },
+  {
+    "id": "emblem.side.beacon",
+    "path": "/assets/emblems/side/beacon.png",
+    "source": "side_emblems.png",
+    "width": 96,
+    "height": 96
+  },
+  {
+    "id": "emblem.side.silence",
+    "path": "/assets/emblems/side/silence.png",
+    "source": "side_emblems.png",
+    "width": 95,
+    "height": 96
+  },
+  {
+    "id": "map.icon.resource.circuit",
+    "path": "/assets/map/icons/circuit.png",
+    "source": "icons_resources_markers.png",
+    "width": 32,
+    "height": 32
+  },
+  {
+    "id": "map.icon.resource.food",
+    "path": "/assets/map/icons/food.png",
+    "source": "icons_resources_markers.png",
+    "width": 29,
+    "height": 32
+  },
+  {
+    "id": "map.icon.resource.fuel",
+    "path": "/assets/map/icons/fuel.png",
+    "source": "icons_resources_markers.png",
+    "width": 23,
+    "height": 32
+  },
+  {
+    "id": "map.icon.resource.scrap",
+    "path": "/assets/map/icons/scrap.png",
+    "source": "icons_resources_markers.png",
+    "width": 23,
+    "height": 32
+  },
+  {
+    "id": "map.marker.village.blue_gear",
+    "path": "/assets/map/markers/blue_gear.png",
+    "source": "icons_resources_markers.png",
+    "width": 30,
+    "height": 40
+  },
+  {
+    "id": "map.marker.village.green_bull",
+    "path": "/assets/map/markers/green_bull.png",
+    "source": "icons_resources_markers.png",
+    "width": 31,
+    "height": 40
+  },
+  {
+    "id": "map.marker.village.neutral_ruined",
+    "path": "/assets/map/markers/neutral_ruined.png",
+    "source": "icons_resources_markers.png",
+    "width": 33,
+    "height": 40
+  },
+  {
+    "id": "map.marker.village.red_skull",
+    "path": "/assets/map/markers/red_skull.png",
+    "source": "icons_resources_markers.png",
+    "width": 30,
+    "height": 40
+  },
+  {
+    "id": "map.object.signal_source",
+    "path": "/assets/map/signal_source.png",
+    "source": "source_antenna.png",
+    "width": 128,
+    "height": 122
+  },
+  {
+    "id": "map.tile.cracked_highway",
+    "path": "/assets/map/tiles/cracked_highway.png",
+    "source": "terrain_tiles.png",
+    "width": 32,
+    "height": 32
+  },
+  {
+    "id": "map.tile.dead_forest",
+    "path": "/assets/map/tiles/dead_forest.png",
+    "source": "terrain_tiles.png",
+    "width": 32,
+    "height": 32
+  },
+  {
+    "id": "map.tile.farm_windmill",
+    "path": "/assets/map/tiles/farm_windmill.png",
+    "source": "terrain_tiles.png",
+    "width": 32,
+    "height": 32
+  },
+  {
+    "id": "map.tile.irradiated_lake",
+    "path": "/assets/map/tiles/irradiated_lake.png",
+    "source": "terrain_tiles.png",
+    "width": 32,
+    "height": 32
+  },
+  {
+    "id": "map.tile.rocky_hills",
+    "path": "/assets/map/tiles/rocky_hills.png",
+    "source": "terrain_tiles.png",
+    "width": 32,
+    "height": 32
+  },
+  {
+    "id": "map.tile.ruined_city",
+    "path": "/assets/map/tiles/ruined_city.png",
+    "source": "terrain_tiles.png",
+    "width": 32,
+    "height": 32
+  },
+  {
+    "id": "map.tile.wasteland_dirt_1",
+    "path": "/assets/map/tiles/wasteland_dirt_1.png",
+    "source": "terrain_tiles.png",
+    "width": 32,
+    "height": 32
+  },
+  {
+    "id": "map.tile.wasteland_dirt_2",
+    "path": "/assets/map/tiles/wasteland_dirt_2.png",
+    "source": "terrain_tiles.png",
+    "width": 32,
+    "height": 32
+  },
+  {
+    "id": "map.tile.wasteland_dirt_3",
+    "path": "/assets/map/tiles/wasteland_dirt_3.png",
+    "source": "terrain_tiles.png",
+    "width": 32,
+    "height": 32
+  },
+  {
+    "id": "medal.bronze",
+    "path": "/assets/medals/bronze.png",
+    "source": "medals.png",
+    "width": 30,
+    "height": 56
+  },
+  {
+    "id": "medal.crossed_swords",
+    "path": "/assets/medals/crossed_swords.png",
+    "source": "medals.png",
+    "width": 31,
+    "height": 56
+  },
+  {
+    "id": "medal.gold",
+    "path": "/assets/medals/gold.png",
+    "source": "medals.png",
+    "width": 31,
+    "height": 56
+  },
+  {
+    "id": "medal.radio_wave",
+    "path": "/assets/medals/radio_wave.png",
+    "source": "medals.png",
+    "width": 31,
+    "height": 56
+  },
+  {
+    "id": "medal.shield",
+    "path": "/assets/medals/shield.png",
+    "source": "medals.png",
+    "width": 33,
+    "height": 56
+  },
+  {
+    "id": "medal.silver",
+    "path": "/assets/medals/silver.png",
+    "source": "medals.png",
+    "width": 31,
+    "height": 56
+  },
+  {
+    "id": "ui.button.danger.normal",
+    "path": "/assets/ui/buttons/danger_normal.png",
+    "source": "ui_buttons.png",
+    "width": 145,
+    "height": 56
+  },
+  {
+    "id": "ui.button.danger.pressed",
+    "path": "/assets/ui/buttons/danger_pressed.png",
+    "source": "ui_buttons.png",
+    "width": 143,
+    "height": 56
+  },
+  {
+    "id": "ui.button.icon.close.normal",
+    "path": "/assets/ui/buttons/icon_close_normal.png",
+    "source": "ui_buttons.png",
+    "width": 40,
+    "height": 35
+  },
+  {
+    "id": "ui.button.icon.close.pressed",
+    "path": "/assets/ui/buttons/icon_close_pressed.png",
+    "source": "ui_buttons.png",
+    "width": 40,
+    "height": 40
+  },
+  {
+    "id": "ui.button.icon.gear.normal",
+    "path": "/assets/ui/buttons/icon_gear_normal.png",
+    "source": "ui_buttons.png",
+    "width": 37,
+    "height": 40
+  },
+  {
+    "id": "ui.button.icon.gear.pressed",
+    "path": "/assets/ui/buttons/icon_gear_pressed.png",
+    "source": "ui_buttons.png",
+    "width": 28,
+    "height": 40
+  },
+  {
+    "id": "ui.button.icon.hammer.normal",
+    "path": "/assets/ui/buttons/icon_hammer_normal.png",
+    "source": "ui_buttons.png",
+    "width": 40,
+    "height": 35
+  },
+  {
+    "id": "ui.button.icon.hammer.pressed",
+    "path": "/assets/ui/buttons/icon_hammer_pressed.png",
+    "source": "ui_buttons.png",
+    "width": 38,
+    "height": 40
+  },
+  {
+    "id": "ui.button.primary.normal",
+    "path": "/assets/ui/buttons/primary_normal.png",
+    "source": "ui_buttons.png",
+    "width": 154,
+    "height": 56
+  },
+  {
+    "id": "ui.button.primary.pressed",
+    "path": "/assets/ui/buttons/primary_pressed.png",
+    "source": "ui_buttons.png",
+    "width": 156,
+    "height": 56
+  },
+  {
+    "id": "ui.button.round.normal",
+    "path": "/assets/ui/buttons/round_normal.png",
+    "source": "ui_buttons.png",
+    "width": 40,
+    "height": 39
+  },
+  {
+    "id": "ui.button.round.pressed",
+    "path": "/assets/ui/buttons/round_pressed.png",
+    "source": "ui_buttons.png",
+    "width": 40,
+    "height": 39
+  },
+  {
+    "id": "ui.button.secondary.normal",
+    "path": "/assets/ui/buttons/secondary_normal.png",
+    "source": "ui_buttons.png",
+    "width": 148,
+    "height": 56
+  },
+  {
+    "id": "ui.button.secondary.pressed",
+    "path": "/assets/ui/buttons/secondary_pressed.png",
+    "source": "ui_buttons.png",
+    "width": 157,
+    "height": 56
+  },
+  {
+    "id": "ui.button.toggle.off",
+    "path": "/assets/ui/buttons/toggle_off.png",
+    "source": "ui_buttons.png",
+    "width": 40,
+    "height": 40
+  },
+  {
+    "id": "ui.button.toggle.on",
+    "path": "/assets/ui/buttons/toggle_on.png",
+    "source": "ui_buttons.png",
+    "width": 40,
+    "height": 33
+  },
+  {
+    "id": "ui.icon.nav.army.default",
+    "path": "/assets/ui/nav/army_default.png",
+    "source": "ui_nav_icons.png",
+    "width": 29,
+    "height": 32
+  },
+  {
+    "id": "ui.icon.nav.army.hover",
+    "path": "/assets/ui/nav/army_hover.png",
+    "source": "ui_nav_icons_hover.png",
+    "width": 30,
+    "height": 32
+  },
+  {
+    "id": "ui.icon.nav.base.default",
+    "path": "/assets/ui/nav/base_default.png",
+    "source": "ui_nav_icons.png",
+    "width": 25,
+    "height": 32
+  },
+  {
+    "id": "ui.icon.nav.base.hover",
+    "path": "/assets/ui/nav/base_hover.png",
+    "source": "ui_nav_icons_hover.png",
+    "width": 28,
+    "height": 32
+  },
+  {
+    "id": "ui.icon.nav.map.default",
+    "path": "/assets/ui/nav/map_default.png",
+    "source": "ui_nav_icons.png",
+    "width": 30,
+    "height": 32
+  },
+  {
+    "id": "ui.icon.nav.map.hover",
+    "path": "/assets/ui/nav/map_hover.png",
+    "source": "ui_nav_icons_hover.png",
+    "width": 32,
+    "height": 30
+  },
+  {
+    "id": "ui.icon.nav.market.default",
+    "path": "/assets/ui/nav/market_default.png",
+    "source": "ui_nav_icons.png",
+    "width": 30,
+    "height": 32
+  },
+  {
+    "id": "ui.icon.nav.market.hover",
+    "path": "/assets/ui/nav/market_hover.png",
+    "source": "ui_nav_icons_hover.png",
+    "width": 30,
+    "height": 32
+  },
+  {
+    "id": "ui.icon.nav.rankings.default",
+    "path": "/assets/ui/nav/rankings_default.png",
+    "source": "ui_nav_icons.png",
+    "width": 26,
+    "height": 32
+  },
+  {
+    "id": "ui.icon.nav.rankings.hover",
+    "path": "/assets/ui/nav/rankings_hover.png",
+    "source": "ui_nav_icons_hover.png",
+    "width": 28,
+    "height": 32
+  },
+  {
+    "id": "ui.icon.nav.reports.default",
+    "path": "/assets/ui/nav/reports_default.png",
+    "source": "ui_nav_icons.png",
+    "width": 32,
+    "height": 25
+  },
+  {
+    "id": "ui.icon.nav.reports.hover",
+    "path": "/assets/ui/nav/reports_hover.png",
+    "source": "ui_nav_icons_hover.png",
+    "width": 32,
+    "height": 26
+  },
+  {
+    "id": "ui.icon.nav.settings.default",
+    "path": "/assets/ui/nav/settings_default.png",
+    "source": "ui_nav_icons.png",
+    "width": 31,
+    "height": 32
+  },
+  {
+    "id": "ui.icon.nav.settings.hover",
+    "path": "/assets/ui/nav/settings_hover.png",
+    "source": "ui_nav_icons_hover.png",
+    "width": 31,
+    "height": 32
+  },
+  {
+    "id": "ui.icon.nav.side.default",
+    "path": "/assets/ui/nav/side_default.png",
+    "source": "ui_nav_icons.png",
+    "width": 21,
+    "height": 32
+  },
+  {
+    "id": "ui.icon.nav.side.hover",
+    "path": "/assets/ui/nav/side_hover.png",
+    "source": "ui_nav_icons_hover.png",
+    "width": 21,
+    "height": 32
+  },
+  {
+    "id": "ui.panel.badge",
+    "path": "/assets/ui/panels/badge.png",
+    "source": "ui_panels.png",
+    "width": 57,
+    "height": 64
+  },
+  {
+    "id": "ui.panel.bar_bottom",
+    "path": "/assets/ui/panels/bar_bottom.png",
+    "source": "ui_panels.png",
+    "width": 371,
+    "height": 48
+  },
+  {
+    "id": "ui.panel.bar_top",
+    "path": "/assets/ui/panels/bar_top.png",
+    "source": "ui_panels.png",
+    "width": 357,
+    "height": 48
+  },
+  {
+    "id": "ui.panel.card",
+    "path": "/assets/ui/panels/card.png",
+    "source": "ui_panels.png",
+    "width": 116,
+    "height": 176
+  },
+  {
+    "id": "ui.panel.frame_large",
+    "path": "/assets/ui/panels/frame_large.png",
+    "source": "ui_panels.png",
+    "width": 256,
+    "height": 194
+  },
+  {
+    "id": "ui.panel.tooltip",
+    "path": "/assets/ui/panels/tooltip.png",
+    "source": "ui_panels.png",
+    "width": 96,
+    "height": 80
+  },
+  {
+    "id": "ui.progress.fill.green",
+    "path": "/assets/ui/buttons/progress_fill_green.png",
+    "source": "ui_buttons.png",
+    "width": 167,
+    "height": 20
+  },
+  {
+    "id": "ui.progress.fill.orange",
+    "path": "/assets/ui/buttons/progress_fill_orange.png",
+    "source": "ui_buttons.png",
+    "width": 138,
+    "height": 20
+  },
+  {
+    "id": "ui.progress.frame",
+    "path": "/assets/ui/buttons/progress_frame.png",
+    "source": "ui_buttons.png",
+    "width": 149,
+    "height": 40
+  },
+  {
+    "id": "unit.engineers.bulwark_guard",
+    "path": "/assets/units/engineers/bulwark_guard.png",
+    "source": "units_engineers.png",
+    "width": 58,
+    "height": 64
+  },
+  {
+    "id": "unit.engineers.crane_rig",
+    "path": "/assets/units/engineers/crane_rig.png",
+    "source": "units_engineers.png",
+    "width": 70,
+    "height": 64
+  },
+  {
+    "id": "unit.engineers.exo_trooper",
+    "path": "/assets/units/engineers/exo_trooper.png",
+    "source": "units_engineers.png",
+    "width": 59,
+    "height": 64
+  },
+  {
+    "id": "unit.engineers.hover_drone",
+    "path": "/assets/units/engineers/hover_drone.png",
+    "source": "units_engineers.png",
+    "width": 58,
+    "height": 64
+  },
+  {
+    "id": "unit.engineers.quad_bike",
+    "path": "/assets/units/engineers/quad_bike.png",
+    "source": "units_engineers.png",
+    "width": 86,
+    "height": 64
+  },
+  {
+    "id": "unit.nomads.ballista_wagon",
+    "path": "/assets/units/nomads/ballista_wagon.png",
+    "source": "units_nomads.png",
+    "width": 78,
+    "height": 64
+  },
+  {
+    "id": "unit.nomads.dune_buggy",
+    "path": "/assets/units/nomads/dune_buggy.png",
+    "source": "units_nomads.png",
+    "width": 75,
+    "height": 64
+  },
+  {
+    "id": "unit.nomads.falconer",
+    "path": "/assets/units/nomads/falconer.png",
+    "source": "units_nomads.png",
+    "width": 44,
+    "height": 64
+  },
+  {
+    "id": "unit.nomads.skirmisher",
+    "path": "/assets/units/nomads/skirmisher.png",
+    "source": "units_nomads.png",
+    "width": 69,
+    "height": 64
+  },
+  {
+    "id": "unit.nomads.sniper",
+    "path": "/assets/units/nomads/sniper.png",
+    "source": "units_nomads.png",
+    "width": 87,
+    "height": 64
+  },
+  {
+    "id": "unit.raiders.biker",
+    "path": "/assets/units/raiders/biker.png",
+    "source": "units_raiders.png",
+    "width": 64,
+    "height": 64
+  },
+  {
+    "id": "unit.raiders.brute",
+    "path": "/assets/units/raiders/brute.png",
+    "source": "units_raiders.png",
+    "width": 56,
+    "height": 64
+  },
+  {
+    "id": "unit.raiders.molotov_thrower",
+    "path": "/assets/units/raiders/molotov_thrower.png",
+    "source": "units_raiders.png",
+    "width": 44,
+    "height": 64
+  },
+  {
+    "id": "unit.raiders.scout",
+    "path": "/assets/units/raiders/scout.png",
+    "source": "units_raiders.png",
+    "width": 35,
+    "height": 64
+  },
+  {
+    "id": "unit.raiders.siege_truck",
+    "path": "/assets/units/raiders/siege_truck.png",
+    "source": "units_raiders.png",
+    "width": 62,
+    "height": 64
+  }
+]

@@ -69,6 +69,41 @@ export interface SpeedConfig {
   travel: number;
 }
 
+/**
+ * The three playable factions (M2 §7). Travian analogs: Teutons / Romans / Gauls. `game-core`
+ * stays display-free — ids only; the client maps id -> i18n key / name / prose.
+ */
+export const FACTIONS = ['raiders', 'engineers', 'nomads'] as const;
+
+export type Faction = (typeof FACTIONS)[number];
+
+/**
+ * All unit types shipped so far: the three faction scouts only (M2 §7). The other 12 units
+ * (infantry, cavalry, siege, etc.) land in M3.
+ */
+export const UNIT_TYPES = ['lookout', 'surveyorDrone', 'falconer'] as const;
+
+export type UnitType = (typeof UNIT_TYPES)[number];
+
+/** A unit's gameplay role. Only `'scout'` exists until M3 adds the rest of the roster. */
+export type UnitRole = 'scout';
+
+export interface UnitDef {
+  type: UnitType;
+  faction: Faction;
+  role: UnitRole;
+  /** Cost to train one unit, at classic x1 (§7). */
+  cost: Resources;
+  /** Time to train one unit in seconds, at classic x1, before `speed.training` (§7). */
+  baseTrainTimeSec: number;
+  /** Fields per hour at classic x1, before `speed.travel` (see `travelTimeMs`, M2 §0). */
+  speed: number;
+  scoutAttack: number;
+  scoutDefense: number;
+  /** Hourly Food upkeep of one unit of this type, from the moment it is credited (§7). */
+  foodUpkeepPerHour: number;
+}
+
 export interface GameConfig {
   /** Archived alongside each finished season so past seasons keep their original balance. */
   configVersion: number;
@@ -107,6 +142,79 @@ export interface GameConfig {
     maxSettlements: number;
   };
   buildings: Record<BuildingType, BuildingDef>;
+  /** The unit catalogue (M2 §7): the three faction scouts today, the full roster in M3. */
+  units: Record<UnitType, UnitDef>;
+  /** Scout-vs-scout combat loss curve and intel-tier gating (M2 §8). */
+  scouting: ScoutingConfig;
+  /** Movement send/cancel tuning (M2 §6). */
+  movement: MovementConfig;
+  map: MapConfig;
+}
+
+/** Movement (currently: scout) send/cancel tuning (M2 §6). */
+export interface MovementConfig {
+  /**
+   * How long after send a movement can still be cancelled, in ms (Kirilloid/T4 recall
+   * window). Draft 90 000 (90s) — a number, not a shape, so it's sweepable by `tools/sim`
+   * like everything else in this file.
+   */
+  cancelWindowMs: number;
+}
+
+/** Scout resolution tuning: the casualty curve and the Radio Tower intel-tier gate (M2 §8). */
+export interface ScoutingConfig {
+  /**
+   * Exponent of the Kirilloid-style casualty curve:
+   * `lossFraction = min(1, (defPts / atkPts) ** lossExponent)`. Draft 1.5.
+   */
+  lossExponent: number;
+  /**
+   * Minimum Radio Tower level differential (`attackerTower - defenderTower`) at which the
+   * `'buildings'` intel tier unlocks; below it, intel stays at `'base'`. Draft 1.
+   */
+  buildingsTierMinDiff: number;
+}
+
+/**
+ * Draft terrain distribution `terrainAt` rolls against (M2 §2); values should sum to 1.
+ * Terrain is cosmetic except one rule: toxic lake tiles cannot host a settlement.
+ */
+export interface MapTerrainWeights {
+  wasteland: number;
+  deadForest: number;
+  rockyHills: number;
+  ruinedCity: number;
+  brokenHighway: number;
+  toxicLake: number;
+}
+
+/** Map geometry, terrain, oasis and spawn tuning (M2 §1, §2, §3). */
+export interface MapConfig {
+  /** Grid half-width: both axes run `-radius..radius` (61x61 for radius 30, §1). */
+  radius: number;
+  terrainWeights: MapTerrainWeights;
+  /** Farm oases: placed once at world generation, deterministic from the world seed (§2). */
+  oases: {
+    count: number;
+    /** Minimum pairwise Chebyshev distance kept between any two placed oases. */
+    minDistance: number;
+    /** Tiles kept clear at the grid edge: no oasis where `max(|x|, |y|) > radius - edgeMargin`. */
+    edgeMargin: number;
+  };
+  /** Center-out expanding annulus spawn policy, shared by humans and NPCs alike (§3). */
+  spawn: {
+    /** Base term of `R(n) = min(maxRadius, baseRadius + ceil(growthCoefficient * sqrt(n)))`. */
+    baseRadius: number;
+    growthCoefficient: number;
+    /** Width of the annulus `[max(0, R(n) - bandWidth), R(n)]` candidates are drawn from. */
+    bandWidth: number;
+    maxRadius: number;
+  };
+  /** Settleability tuning beyond terrain/oasis (§3). */
+  settlement: {
+    /** Minimum Chebyshev distance a new settlement must keep from every existing one. */
+    minDistance: number;
+  };
 }
 
 /** Fixed number of building slots per settlement (spatial-ready schema, §8). */

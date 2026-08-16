@@ -7,6 +7,7 @@ import type {
 } from '../config/types.js';
 import { ceilSecondsToMs, emptyResources, roundCost } from '../numeric.js';
 import { RESOURCE_KINDS, type Resources } from '../types.js';
+import { calcTroopFoodUpkeepPerHour, type TroopCounts } from '../units/index.js';
 
 /** Throws when `level` is outside `1..maxLevel` (used by cost and build-time commands). */
 function assertValidLevel(level: number, maxLevel: number, fnName: string): void {
@@ -131,25 +132,53 @@ export function calcFoodUpkeepPerHour(config: GameConfig, buildings: BuildingLev
   return total;
 }
 
-/** Gross Food production minus Food upkeep; may be negative (§4). */
-export function calcNetFoodPerHour(config: GameConfig, buildings: BuildingLevels): number {
+/**
+ * Gross Food production minus building Food upkeep minus troop Food upkeep; may be negative
+ * (§4, §7). `troops` defaults to an empty list ("no troops"); server/client callers MUST pass
+ * the settlement's real troop list once troops exist there (M2a's later settlement-schema step)
+ * — omitting it silently understates upkeep.
+ */
+export function calcNetFoodPerHour(
+  config: GameConfig,
+  buildings: BuildingLevels,
+  troops: TroopCounts = [],
+): number {
   return (
-    calcSettlementProduction(config, buildings).food - calcFoodUpkeepPerHour(config, buildings)
+    calcSettlementProduction(config, buildings).food -
+    calcFoodUpkeepPerHour(config, buildings) -
+    calcTroopFoodUpkeepPerHour(config, troops)
   );
 }
 
 /**
  * True when replacing `type`'s current entry with `targetLevel` would drive net Food below zero
- * (§4). Does not mutate `buildings`.
+ * (§4). Does not mutate `buildings`. `troops` defaults to "no troops" — see `calcNetFoodPerHour`.
  */
 export function wouldStarveSettlement(
   config: GameConfig,
   buildings: BuildingLevels,
   type: BuildingType,
   targetLevel: number,
+  troops: TroopCounts = [],
 ): boolean {
   const next = buildings.filter((b) => b.type !== type).concat([{ type, level: targetLevel }]);
-  return calcNetFoodPerHour(config, next) < 0;
+  return calcNetFoodPerHour(config, next, troops) < 0;
+}
+
+/**
+ * The training gate (§7): true when net Food per hour would go negative once `addedTroops` (a
+ * whole training-order batch) are credited on top of the settlement's existing `troops` —
+ * exactly the same absolute-gate shape as `wouldStarveSettlement`. A settlement already
+ * net-negative can never train (an empty `addedTroops` batch still evaluates the existing
+ * `troops` alone). Does not mutate either list.
+ */
+export function wouldStarveWithTroops(
+  config: GameConfig,
+  buildings: BuildingLevels,
+  troops: TroopCounts,
+  addedTroops: TroopCounts,
+): boolean {
+  return calcNetFoodPerHour(config, buildings, [...troops, ...addedTroops]) < 0;
 }
 
 /** Per-resource storage caps: Warehouse gates scrap/fuel/electronics, Cold Storage gates Food (§5). */

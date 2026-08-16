@@ -6,3 +6,6 @@ export * from './config/index.js';
 export * from './formulas/index.js';
 export * from './economy/index.js';
 export * from './balance/index.js';
+export * from './map/index.js';
+export * from './units/index.js';
+export * from './scouting/index.js';

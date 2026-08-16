@@ -1,12 +1,17 @@
 import type { ReactElement } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { ApiError } from '../api/client';
 import { fetchMe, fetchMySettlements } from '../api/endpoints';
 import type { AccountView } from '../api/types';
 import { BaseScreen } from '../base/BaseScreen';
+import type { NavTab } from '../base/BottomNav';
 import { SETTLEMENTS_MINE_KEY } from '../base/settlementCache';
 import { ErrorPanel, LoadingPanel } from '../components/StatusPanels';
+import { MapScreen } from '../map/MapScreen';
+import { useReportsRealtime } from '../realtime/useReportsRealtime';
+import { ReportsScreen } from '../reports/ReportsScreen';
 import { CreateSettlementScreen } from './CreateSettlementScreen';
 import { RegisterScreen } from './RegisterScreen';
 import { WelcomeScreen } from './WelcomeScreen';
@@ -52,6 +57,16 @@ function SettlementGate({ account }: SettlementGateProps): ReactElement {
     queryKey: SETTLEMENTS_MINE_KEY,
     queryFn: ({ signal }) => fetchMySettlements(signal),
   });
+  // Screen switching without a router (M2c.1): the app is a single mobile-first shell, so the
+  // active bottom-nav tab is just local state lifted to the one place that hosts every screen
+  // able to show it, not URL state.
+  const [activeTab, setActiveTab] = useState<NavTab>('base');
+
+  // Mounted once per authenticated session, unconditionally (before the early returns below,
+  // per the Rules of Hooks) — `SettlementGate` itself never remounts when `activeTab` changes,
+  // only its returned screen does, so the shared socket subscription persists across tab
+  // switches instead of churning on every click (M2c.3, see that hook's own comment).
+  useReportsRealtime();
 
   if (settlementsQuery.isPending) {
     return <LoadingPanel />;
@@ -68,5 +83,15 @@ function SettlementGate({ account }: SettlementGateProps): ReactElement {
     return <CreateSettlementScreen />;
   }
 
-  return <BaseScreen settlement={firstSettlement} account={account} />;
+  if (activeTab === 'map') {
+    return (
+      <MapScreen account={account} settlement={firstSettlement} onNavigateTab={setActiveTab} />
+    );
+  }
+
+  if (activeTab === 'reports') {
+    return <ReportsScreen onNavigateTab={setActiveTab} />;
+  }
+
+  return <BaseScreen settlement={firstSettlement} account={account} onNavigateTab={setActiveTab} />;
 }

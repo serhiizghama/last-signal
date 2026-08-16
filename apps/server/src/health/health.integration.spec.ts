@@ -17,6 +17,8 @@ describe('Health (integration)', () => {
   beforeAll(async () => {
     replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     process.env['MONGODB_URI'] = replSet.getUri('last-signal-health-test');
+    // This suite doesn't exercise NPC seeding — disabling it keeps boot fast.
+    process.env['WORLD_NPC_COUNT'] = '0';
 
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
@@ -31,6 +33,7 @@ describe('Health (integration)', () => {
     await app.close();
     await replSet.stop();
     delete process.env['MONGODB_URI'];
+    delete process.env['WORLD_NPC_COUNT'];
   }, 60_000);
 
   it('GET /api/health returns 200 with the expected shape', async () => {

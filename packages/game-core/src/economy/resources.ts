@@ -6,6 +6,7 @@ import {
 } from '../formulas/index.js';
 import { canAfford, emptyResources } from '../numeric.js';
 import { RESOURCE_KINDS, type ResourceKind, type Resources } from '../types.js';
+import type { TroopCounts } from '../units/index.js';
 
 /** Milliseconds in an hour; production rates are per hour, everything else is ms. */
 export const HOUR_MS = 3_600_000;
@@ -17,31 +18,42 @@ export interface ResourceState {
   lastCalcAt: number;
 }
 
-/** Hourly net rates actually used for settlement: gross production, minus Food upkeep on food. */
-export function calcNetRates(config: GameConfig, buildings: BuildingLevels): Resources {
+/**
+ * Hourly net rates actually used for settlement: gross production, minus Food upkeep (buildings
+ * + troops) on food. `troops` defaults to an empty list ("no troops"); server/client callers
+ * MUST pass the settlement's real troop list once troops exist there (M2a's later
+ * settlement-schema step) — omitting it silently understates Food upkeep.
+ */
+export function calcNetRates(
+  config: GameConfig,
+  buildings: BuildingLevels,
+  troops: TroopCounts = [],
+): Resources {
   const gross = calcSettlementProduction(config, buildings);
   return {
     ...gross,
-    food: calcNetFoodPerHour(config, buildings),
+    food: calcNetFoodPerHour(config, buildings, troops),
   };
 }
 
 /**
  * Advance `state` to `now`. Never mutates. Production halts at the cap (nothing accrues past
  * it and nothing is retroactively wasted). Returns the new state with `lastCalcAt = now`.
+ * `troops` defaults to "no troops" — see `calcNetRates`.
  */
 export function settleResources(
   config: GameConfig,
   buildings: BuildingLevels,
   state: ResourceState,
   now: number,
+  troops: TroopCounts = [],
 ): ResourceState {
   const elapsedMs = now - state.lastCalcAt;
   if (elapsedMs <= 0) {
     return { values: { ...state.values }, lastCalcAt: now };
   }
 
-  const rates = calcNetRates(config, buildings);
+  const rates = calcNetRates(config, buildings, troops);
   const caps = calcStorageCaps(config, buildings);
   const values = emptyResources();
   for (const kind of RESOURCE_KINDS) {
@@ -56,15 +68,16 @@ export function settleResources(
 
 /**
  * Milliseconds until `resource` reaches its cap, or `null` when it never will
- * (rate <= 0, or already at/above the cap).
+ * (rate <= 0, or already at/above the cap). `troops` defaults to "no troops" — see `calcNetRates`.
  */
 export function msUntilFull(
   config: GameConfig,
   buildings: BuildingLevels,
   state: ResourceState,
   resource: ResourceKind,
+  troops: TroopCounts = [],
 ): number | null {
-  const rate = calcNetRates(config, buildings)[resource];
+  const rate = calcNetRates(config, buildings, troops)[resource];
   if (rate <= 0) {
     return null;
   }
@@ -76,14 +89,18 @@ export function msUntilFull(
   return Math.ceil(((cap - value) / rate) * HOUR_MS);
 }
 
-/** Milliseconds until `resource` hits zero on a negative rate, or `null` when it never will. */
+/**
+ * Milliseconds until `resource` hits zero on a negative rate, or `null` when it never will.
+ * `troops` defaults to "no troops" — see `calcNetRates`.
+ */
 export function msUntilEmpty(
   config: GameConfig,
   buildings: BuildingLevels,
   state: ResourceState,
   resource: ResourceKind,
+  troops: TroopCounts = [],
 ): number | null {
-  const rate = calcNetRates(config, buildings)[resource];
+  const rate = calcNetRates(config, buildings, troops)[resource];
   if (rate >= 0) {
     return null;
   }
@@ -96,19 +113,21 @@ export function msUntilEmpty(
 
 /**
  * Milliseconds until every component of `cost` is affordable, or `null` when it never becomes
- * affordable (some needed resource has a non-positive rate, or the cost exceeds that resource's cap).
+ * affordable (some needed resource has a non-positive rate, or the cost exceeds that resource's
+ * cap). `troops` defaults to "no troops" — see `calcNetRates`.
  */
 export function msUntilAffordable(
   config: GameConfig,
   buildings: BuildingLevels,
   state: ResourceState,
   cost: Resources,
+  troops: TroopCounts = [],
 ): number | null {
   if (canAfford(state.values, cost)) {
     return 0;
   }
 
-  const rates = calcNetRates(config, buildings);
+  const rates = calcNetRates(config, buildings, troops);
   const caps = calcStorageCaps(config, buildings);
   let maxWaitMs = 0;
   for (const kind of RESOURCE_KINDS) {

@@ -34,6 +34,19 @@ export class BuildCommandError extends HttpException {
   }
 }
 
+// Every rejected `trainScouts` command (unknown/foreign unit type, no faction, invalid
+// count, no Barracks, the one-active-order cap, the Food gate, affordability) — one class,
+// key + params + status supplied at the call site, mirroring `BuildCommandError`.
+export class TrainCommandError extends HttpException {
+  constructor(
+    key: string,
+    params: Record<string, unknown> = {},
+    status: HttpStatus = HttpStatus.BAD_REQUEST,
+  ) {
+    super(errorBody(key, params), status);
+  }
+}
+
 // Thrown internally by the version-guard helpers when a `findOneAndUpdate` matches no
 // document (the expected `version` is stale) — a plain `Error`, not an `HttpException`,
 // because `SettlementsService`'s command runner catches it to decide whether to retry the

@@ -9,9 +9,15 @@ import { DatabaseModule } from './database/database.module';
 import { DevSeedModule } from './dev/dev-seed.module';
 import { GameConfigModule } from './game-config/game-config.module';
 import { HealthModule } from './health/health.module';
+import { MapModule } from './map/map.module';
+import { MovementsModule } from './movements/movements.module';
+import { NpcModule } from './npc/npc.module';
 import { PlacementModule } from './placement/placement.module';
+import { RealtimeModule } from './realtime/realtime.module';
+import { ReportsModule } from './reports/reports.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { SettlementsModule } from './settlements/settlements.module';
+import { WorldModule } from './world/world.module';
 
 @Module({
   imports: [
@@ -24,6 +30,12 @@ import { SettlementsModule } from './settlements/settlements.module';
     AuthModule,
     AccountsModule,
     SettlementsModule,
+    MovementsModule,
+    WorldModule,
+    NpcModule,
+    MapModule,
+    RealtimeModule,
+    ReportsModule,
     DevSeedModule,
   ],
 })

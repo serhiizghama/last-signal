@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../config/index.js';
 import type { BuildingLevels } from '../config/types.js';
 import type { Resources } from '../types.js';
+import { calcTroopFoodUpkeepPerHour, type TroopCounts } from '../units/index.js';
 import {
   calcNetRates,
   HOUR_MS,
@@ -39,6 +40,31 @@ describe('calcNetRates', () => {
     // commandCenter L1: no production, upkeep weight 0.2 -> 0.2 * 1.58^0 * 5 = 1.
     const buildings: BuildingLevels = [{ type: 'commandCenter', level: 1 }];
     expect(calcNetRates(config, buildings)).toEqual(resources({ food: -1 }));
+  });
+});
+
+describe('calcNetRates with troops (§7)', () => {
+  it('omitting troops behaves exactly like an empty troop list', () => {
+    const buildings: BuildingLevels = [{ type: 'scrapYard', level: 1 }];
+    expect(calcNetRates(config, buildings)).toEqual(calcNetRates(config, buildings, []));
+  });
+
+  it('subtracts troop Food upkeep on top of building upkeep, leaving other resources untouched', () => {
+    const buildings: BuildingLevels = [
+      { type: 'scrapYard', level: 1 },
+      { type: 'greenhouseFarm', level: 1 },
+    ];
+    const troops: TroopCounts = [{ unitType: 'falconer', count: 3 }];
+    const withoutTroops = calcNetRates(config, buildings);
+    const withTroops = calcNetRates(config, buildings, troops);
+
+    expect(withTroops.scrap).toBe(withoutTroops.scrap);
+    expect(withTroops.fuel).toBe(withoutTroops.fuel);
+    expect(withTroops.electronics).toBe(withoutTroops.electronics);
+    expect(withTroops.food).toBeCloseTo(
+      withoutTroops.food - calcTroopFoodUpkeepPerHour(config, troops),
+      9,
+    );
   });
 });
 
@@ -166,6 +192,28 @@ describe('settleResources negative food', () => {
 
     const wayPast = settleResources(config, buildings, start, 1000 * HOUR_MS);
     expect(wayPast.values.food).toBe(0);
+  });
+});
+
+describe('settleResources with troops (§7)', () => {
+  it('accrues Food more slowly with troops present than without, over the same elapsed time', () => {
+    const buildings: BuildingLevels = [{ type: 'greenhouseFarm', level: 3 }];
+    const troops: TroopCounts = [{ unitType: 'lookout', count: 5 }];
+    const start: ResourceState = { values: resources({}), lastCalcAt: 0 };
+
+    const withoutTroops = settleResources(config, buildings, start, HOUR_MS);
+    const withTroops = settleResources(config, buildings, start, HOUR_MS, troops);
+
+    expect(withTroops.values.food).toBeLessThan(withoutTroops.values.food);
+  });
+
+  it('drains Food when troop upkeep alone outweighs production, even with no buildings at all', () => {
+    const troops: TroopCounts = [{ unitType: 'lookout', count: 50 }];
+    const start: ResourceState = { values: resources({ food: 1000 }), lastCalcAt: 0 };
+
+    const next = settleResources(config, [], start, HOUR_MS, troops);
+
+    expect(next.values.food).toBeCloseTo(1000 - calcTroopFoodUpkeepPerHour(config, troops), 9);
   });
 });
 

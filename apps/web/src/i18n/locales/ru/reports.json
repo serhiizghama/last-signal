@@ -1,0 +1,39 @@
+{
+  "title": "Отчёты",
+  "empty": "Отчётов пока нет.",
+  "loadMore": "Показать ещё",
+  "backToList": "К списку",
+  "unreadLabel": "Новый",
+  "target": "Цель: {{x}}:{{y}}",
+  "list": {
+    "scout": "Разведка",
+    "scoutFailed": "Разведка не удалась",
+    "scoutDetected": "Вас разведали"
+  },
+  "detail": {
+    "scout": {
+      "title": "Отчёт разведки",
+      "sentLabel": "Отправлено: {{name}} ×{{count}}",
+      "survivorsLabel": "Вернулось: {{name}} ×{{count}}",
+      "lossesLabel": "Потери: {{name}} ×{{count}}",
+      "noLosses": "Потерь нет.",
+      "troopsEntry": "{{name}} ×{{count}}",
+      "intelTitle": "Разведданные",
+      "resourcesLabel": "Ресурсы цели:",
+      "troopsLabel": "Войска в поселении:",
+      "noTroops": "Войск не обнаружено.",
+      "buildingsTitle": "Постройки:",
+      "buildingsUnavailable": "Радиовышка слишком слаба, чтобы разведать постройки."
+    },
+    "scoutFailed": {
+      "title": "Разведка провалена",
+      "allScoutsDead": "Все разведчики погибли. Разведданные не получены.",
+      "targetNotFound": "В указанной точке больше нет поселения. Отряд повернул назад."
+    },
+    "scoutDetected": {
+      "title": "Вас обнаружили",
+      "body": "Поселение «{{settlement}}» игрока {{owner}} разведало вас {{time}}.",
+      "unknownSettlement": "неизвестно"
+    }
+  }
+}

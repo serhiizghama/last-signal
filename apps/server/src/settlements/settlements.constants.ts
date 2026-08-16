@@ -17,6 +17,30 @@ export const WAITING_QUEUE_SLOTS = 2;
 // `GameEvent.type` this feature schedules and handles.
 export const BUILD_COMPLETE_EVENT_TYPE = 'buildComplete';
 
+// `GameEvent.type` for one chained unit-completion of a `trainScouts` order (M2b.2, §7):
+// one pending event per active order, credits one unit and reschedules itself for the next
+// unit unless the order is now fully delivered.
+export const TRAINING_COMPLETE_EVENT_TYPE = 'trainingComplete';
+
+// One active training order per settlement (orchestrator decision, M2b.2 — not reopened by
+// this step, only implemented). `docs/M2_DESIGN_DECISIONS.md` §7 does not specify a
+// training-queue depth, so this is the minimal shape consistent with the record: a second
+// `trainScouts` call while one order is already running is rejected with
+// `errors.training.queueBusy`. M3 (the remaining 12 units) can widen this the same way
+// `WAITING_QUEUE_SLOTS` widens the build queue — a constant to change, not a rewrite.
+// Cancelling a training order is out of scope for the same reason (the design record
+// defines no cancel for training, unlike builds) — there is deliberately no
+// `cancelTraining` method/route anywhere in this module.
+export const MAX_ACTIVE_TRAINING_ORDERS = 1;
+
+// Upper bound on a single `trainScouts` order's `count`. Generous enough that no real
+// player hits it in normal play — even at the fastest scout's shortest training time, a
+// batch this size represents many hours of queued, one-at-a-time completions — while still
+// bounding how many chained `trainingComplete` events a single command can ultimately fan
+// out into over the order's lifetime (one event alive at a time, but each completion
+// reschedules the next, `count` times in total).
+export const MAX_TRAIN_COUNT = 200;
+
 // Bounded retry count for the version-guard command pattern (concurrency playbook,
 // `docs/M1_DESIGN_DECISIONS.md` §11): a command retries this many times on a version
 // conflict before giving up with `errors.command.conflictRetryExhausted`.

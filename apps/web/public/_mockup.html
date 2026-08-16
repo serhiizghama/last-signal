@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Last Signal — концепт-мокап (Raiders)</title>
+<style>
+  :root {
+    --bg-deep: #16100B;
+    --panel: #2A211A;
+    --panel-edge: #4A3826;
+    --accent: #D9772F;
+    --teal: #3F7E75;
+    --bone: #E8D9B0;
+    --toxic: #7FD13B;
+    --danger: #B33A2B;
+  }
+  * { box-sizing: border-box; }
+  button { background: none; padding: 0; font-family: inherit; }
+  body {
+    background: #0b0805;
+    color: var(--bone);
+    font-family: system-ui, sans-serif;
+    margin: 0;
+    padding: 40px 0 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 56px;
+  }
+  img { image-rendering: pixelated; }
+  .note {
+    max-width: 420px;
+    text-align: center;
+    color: #9a8b6f;
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 0 16px;
+  }
+  .note b { color: var(--accent); }
+  .screen-label {
+    color: var(--teal);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .phone {
+    width: 402px;
+    height: 840px;
+    background: var(--bg-deep);
+    border: 3px solid #060403;
+    border-radius: 28px;
+    box-shadow: 0 0 0 1px #2a2015, 0 30px 60px rgba(0,0,0,0.6);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ---- top resource bar ---- */
+  .topbar {
+    height: 52px;
+    flex: none;
+    background-image: url('/assets/ui/panels/bar_top.png');
+    background-size: 100% 100%;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    gap: 14px;
+    position: relative;
+    z-index: 5;
+  }
+  .emblem-badge {
+    width: 40px; height: 40px;
+    background-image: url('/assets/emblems/faction/raiders.png');
+    background-size: contain; background-repeat: no-repeat; background-position: center;
+    filter: drop-shadow(0 0 3px #000);
+  }
+  .res { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--bone); text-shadow: 0 1px 2px #000; }
+  .res img { width: 20px; height: 20px; object-fit: contain; }
+  .topbar .spacer { flex: 1; }
+  .icon-btn { width: 30px; height: 30px; background-image: url('/assets/ui/buttons/icon_gear_normal.png'); background-size: contain; background-repeat: no-repeat; }
+
+  /* ---- base / city screen ---- */
+  .ground {
+    flex: 1;
+    position: relative;
+    background-image: url('/assets/map/tiles/wasteland_dirt_1.png');
+    background-size: 56px 56px;
+    overflow: hidden;
+  }
+  .ground .b { position: absolute; filter: drop-shadow(0 4px 3px rgba(0,0,0,0.55)); }
+  .b-label {
+    position: absolute;
+    bottom: -14px; left: 50%; transform: translateX(-50%);
+    font-size: 8px; color: var(--bone); background: rgba(0,0,0,0.55);
+    padding: 1px 4px; border-radius: 3px; white-space: nowrap;
+  }
+  .b-wrap { position: absolute; text-align: center; }
+  .b-wrap img { display: block; }
+
+  .roster {
+    flex: none;
+    display: flex;
+    gap: 8px;
+    padding: 10px 10px;
+    overflow-x: auto;
+    background: var(--bg-deep);
+    border-top: 2px solid var(--panel-edge);
+    position: relative; z-index: 4;
+  }
+  .roster-card {
+    flex: none;
+    width: 64px; height: 84px;
+    background-image: url('/assets/ui/panels/card.png');
+    background-size: 100% 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+    padding-bottom: 4px;
+  }
+  .roster-card img { max-width: 46px; max-height: 46px; }
+  .roster-card span { font-size: 7px; color: var(--bone); margin-top: 2px; }
+
+  .queue-bar {
+    position: absolute; right: 10px; bottom: 176px; z-index: 6;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+  }
+  .queue-bar .frame { position: relative; width: 149px; height: 40px; background-image: url('/assets/ui/buttons/progress_frame.png'); background-size: contain; background-repeat: no-repeat; }
+  .queue-bar .frame img.fill { position: absolute; left: 10px; top: 10px; width: 60%; }
+  .queue-bar .cta { width: 154px; height: 56px; background-image: url('/assets/ui/buttons/primary_normal.png'); background-size: contain; background-repeat: no-repeat; border: 0; color: var(--bone); font-weight: 700; font-size: 12px; letter-spacing: 0.04em; cursor: pointer; }
+
+  /* ---- bottom nav ---- */
+  .navbar {
+    flex: none; height: 58px;
+    background-image: url('/assets/ui/panels/bar_bottom.png');
+    background-size: 100% 100%;
+    display: flex; align-items: center; justify-content: space-around;
+    position: relative; z-index: 5;
+  }
+  .navitem { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .navitem img { width: 22px; height: 22px; object-fit: contain; }
+  .navitem span { font-size: 7px; color: #a08e6c; }
+  .navitem.active span { color: var(--accent); }
+
+  /* ---- map screen ---- */
+  .maparea { flex: 1; position: relative; overflow: hidden; background: #0e0906; }
+  .tilegrid {
+    display: grid;
+    grid-template-columns: repeat(9, 44px);
+    grid-template-rows: repeat(11, 44px);
+    gap: 0;
+    position: absolute; top: 8px; left: 8px;
+  }
+  .tilegrid .tile { width: 44px; height: 44px; background-size: cover; position: relative; }
+  .tilegrid .marker {
+    position: absolute; width: 26px; bottom: 6px; left: 50%; transform: translateX(-50%);
+    filter: drop-shadow(0 2px 2px #000);
+  }
+  .tilegrid .res-badge {
+    position: absolute; top: -4px; right: -4px; width: 22px; height: 22px;
+    background: rgba(10,7,4,0.85); border: 1px solid var(--panel-edge); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; z-index: 2;
+  }
+  .tilegrid .res-badge img { width: 15px; height: 15px; object-fit: contain; }
+  .signal-obj {
+    position: absolute; width: 108px; filter: drop-shadow(0 6px 4px rgba(0,0,0,0.6));
+    z-index: 3;
+  }
+
+  .tapsheet {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+    background-image: url('/assets/ui/panels/card.png');
+    background-size: 100% 100%;
+    height: 150px;
+    margin: 0 10px 10px;
+    display: flex; align-items: center; gap: 10px; padding: 14px;
+  }
+  .tapsheet .info { flex: 1; }
+  .tapsheet .title { font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+  .tapsheet .row { display: flex; align-items: center; gap: 4px; font-size: 11px; margin-bottom: 3px; }
+  .tapsheet .row img { width: 16px; height: 16px; }
+  .tapsheet button {
+    width: 145px; height: 56px; border: 0; cursor: pointer;
+    background-image: url('/assets/ui/buttons/secondary_normal.png'); background-size: contain; background-repeat: no-repeat;
+    color: var(--bone); font-size: 11px; font-weight: 700;
+  }
+</style>
+</head>
+<body>
+
+<div class="note">
+  Концепт-мокап, собранный вручную из нарезанных спрайтов — <b>не код игры</b>, не подключено к
+  реальному приложению. Только фракция <b>Raiders</b> (юниты, эмблема, маркер «red_skull»);
+  здания и UI-хром пока общие на всех фракций — отдельного арта под фракцию для них ещё нет.
+</div>
+
+<div>
+  <div class="screen-label">Экран 1 — база / город</div>
+  <div class="phone">
+    <div class="topbar">
+      <div class="emblem-badge"></div>
+      <div class="res"><img src="/assets/map/icons/scrap.png">24.7k</div>
+      <div class="res"><img src="/assets/map/icons/fuel.png">18.3k</div>
+      <div class="res"><img src="/assets/map/icons/circuit.png">10.6k</div>
+      <div class="res"><img src="/assets/map/icons/food.png">620</div>
+      <div class="spacer"></div>
+      <div class="icon-btn"></div>
+    </div>
+
+    <div class="ground">
+      <div class="b-wrap" style="top:16px; left:16px; width:78px;">
+        <img src="/assets/buildings/scrap_yard.png" style="width:78px">
+        <div class="b-label">Металлолом</div>
+      </div>
+      <div class="b-wrap" style="top:12px; left:152px; width:94px;">
+        <img src="/assets/buildings/command_center.png" style="width:94px">
+        <div class="b-label">Штаб 12</div>
+      </div>
+      <div class="b-wrap" style="top:20px; left:296px; width:72px;">
+        <img src="/assets/buildings/refinery.png" style="width:72px">
+        <div class="b-label">НПЗ</div>
+      </div>
+
+      <div class="b-wrap" style="top:150px; left:12px; width:76px;">
+        <img src="/assets/buildings/machine_shop.png" style="width:76px">
+        <div class="b-label">Мастерская</div>
+      </div>
+      <div class="b-wrap" style="top:148px; left:154px; width:86px;">
+        <img src="/assets/buildings/warehouse.png" style="width:86px">
+        <div class="b-label">Склад</div>
+      </div>
+      <div class="b-wrap" style="top:150px; left:322px; width:56px;">
+        <img src="/assets/buildings/radio_tower.png" style="width:56px">
+        <div class="b-label">Радиовышка 8</div>
+      </div>
+
+      <div class="b-wrap" style="top:288px; left:16px; width:78px;">
+        <img src="/assets/buildings/greenhouse.png" style="width:78px">
+        <div class="b-label">Теплица</div>
+      </div>
+      <div class="b-wrap" style="top:290px; left:154px; width:74px;">
+        <img src="/assets/buildings/workshop.png" style="width:74px">
+        <div class="b-label">Мастерская-2</div>
+      </div>
+      <div class="b-wrap" style="top:296px; left:304px; width:64px;">
+        <img src="/assets/buildings/wall.png" style="width:64px">
+        <div class="b-label">Блокпост</div>
+      </div>
+
+      <div class="b-wrap" style="top:418px; left:22px; width:70px;">
+        <img src="/assets/buildings/cold_storage.png" style="width:70px">
+        <div class="b-label">Холодильник</div>
+      </div>
+      <div class="b-wrap" style="top:420px; left:152px; width:68px;">
+        <img src="/assets/buildings/barracks.png" style="width:68px">
+        <div class="b-label">Бараки 10</div>
+      </div>
+      <div class="b-wrap" style="top:432px; left:266px; width:92px;">
+        <img src="/assets/buildings/market.png" style="width:92px">
+        <div class="b-label">Рынок</div>
+      </div>
+    </div>
+
+    <div class="roster">
+      <div class="roster-card"><img src="/assets/units/raiders/brute.png"><span>Громила</span></div>
+      <div class="roster-card"><img src="/assets/units/raiders/molotov_thrower.png"><span>Поджигатель</span></div>
+      <div class="roster-card"><img src="/assets/units/raiders/biker.png"><span>Байкер</span></div>
+      <div class="roster-card"><img src="/assets/units/raiders/scout.png"><span>Разведчик</span></div>
+      <div class="roster-card"><img src="/assets/units/raiders/siege_truck.png"><span>Таран</span></div>
+    </div>
+
+    <div class="queue-bar">
+      <div class="frame"><img class="fill" src="/assets/ui/buttons/progress_fill_orange.png"></div>
+      <button class="cta">Тренировать</button>
+    </div>
+
+    <div class="navbar">
+      <div class="navitem active"><img src="/assets/ui/nav/base_hover.png"><span>База</span></div>
+      <div class="navitem"><img src="/assets/ui/nav/map_default.png"><span>Карта</span></div>
+      <div class="navitem"><img src="/assets/ui/nav/army_default.png"><span>Войска</span></div>
+      <div class="navitem"><img src="/assets/ui/nav/market_default.png"><span>Рынок</span></div>
+      <div class="navitem"><img src="/assets/ui/nav/reports_default.png"><span>Отчёты</span></div>
+      <div class="navitem"><img src="/assets/ui/nav/side_default.png"><span>Сторона</span></div>
+    </div>
+  </div>
+</div>
+
+<div>
+  <div class="screen-label">Экран 2 — карта / ресурсные поля</div>
+  <div class="phone">
+    <div class="topbar">
+      <div class="emblem-badge"></div>
+      <div class="res"><img src="/assets/map/icons/scrap.png">24.7k</div>
+      <div class="res"><img src="/assets/map/icons/fuel.png">18.3k</div>
+      <div class="res"><img src="/assets/map/icons/circuit.png">10.6k</div>
+      <div class="res"><img src="/assets/map/icons/food.png">620</div>
+      <div class="spacer"></div>
+      <div class="icon-btn"></div>
+    </div>
+
+    <div class="maparea">
+      <div class="tilegrid" id="tilegrid"></div>
+      <img class="signal-obj" src="/assets/map/signal_source.png" style="top:70px; left:150px;">
+
+      <div class="tapsheet">
+        <img src="/assets/map/markers/red_skull.png" style="width:34px; filter:drop-shadow(0 2px 2px #000)">
+        <div class="info">
+          <div class="title">Форпост «Рваный Флаг»</div>
+          <div class="row"><img src="/assets/map/icons/scrap.png"> ~1200 metal · 2 разведчика в гарнизоне</div>
+          <div class="row">Расстояние: 4 · подлёт ≈ 00:18:00</div>
+        </div>
+        <button>Разведать</button>
+      </div>
+    </div>
+
+    <div class="navbar">
+      <div class="navitem"><img src="/assets/ui/nav/base_default.png"><span>База</span></div>
+      <div class="navitem active"><img src="/assets/ui/nav/map_hover.png"><span>Карта</span></div>
+      <div class="navitem"><img src="/assets/ui/nav/army_default.png"><span>Войска</span></div>
+      <div class="navitem"><img src="/assets/ui/nav/market_default.png"><span>Рынок</span></div>
+      <div class="navitem"><img src="/assets/ui/nav/reports_default.png"><span>Отчёты</span></div>
+      <div class="navitem"><img src="/assets/ui/nav/side_default.png"><span>Сторона</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TILES = [
+  'wasteland_dirt_1','wasteland_dirt_2','wasteland_dirt_3','rocky_hills','dead_forest','cracked_highway','ruined_city'
+];
+const cols = 9, rows = 11;
+const grid = document.getElementById('tilegrid');
+// deterministic pseudo-random layout (no Math.random dependency on reload look)
+let seed = 7;
+function rnd() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+
+const specialTiles = { '3,2':'irradiated_lake', '6,4':'farm_windmill', '2,7':'irradiated_lake', '7,8':'farm_windmill' };
+const resourceTiles = { '1,1':'scrap', '7,1':'fuel', '1,9':'circuit', '7,9':'food' };
+const villageTiles = { '4,3':'red_skull', '2,9':'red_skull' };
+
+for (let y = 0; y < rows; y++) {
+  for (let x = 0; x < cols; x++) {
+    const key = x + ',' + y;
+    const cell = document.createElement('div');
+    cell.className = 'tile';
+    const special = specialTiles[key];
+    const roll = rnd();
+    const tileName = special || (roll < 0.78 ? TILES[Math.floor(rnd() * 3)] : TILES[3 + Math.floor(rnd() * 4)]);
+    cell.style.backgroundImage = "url('/assets/map/tiles/" + tileName + ".png')";
+    if (resourceTiles[key]) {
+      const badge = document.createElement('div');
+      badge.className = 'res-badge';
+      badge.innerHTML = '<img src="/assets/map/icons/' + resourceTiles[key] + '.png">';
+      cell.appendChild(badge);
+    }
+    if (villageTiles[key]) {
+      const marker = document.createElement('img');
+      marker.className = 'marker';
+      marker.src = '/assets/map/markers/' + villageTiles[key] + '.png';
+      cell.appendChild(marker);
+    }
+    grid.appendChild(cell);
+  }
+}
+</script>
+</body>
+</html>

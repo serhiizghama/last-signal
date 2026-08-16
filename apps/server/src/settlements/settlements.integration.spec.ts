@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
-import type { BuildingLevels, BuildingType, GameConfig, Resources } from '@last-signal/game-core';
+import type {
+  BuildingLevels,
+  BuildingType,
+  Faction,
+  GameConfig,
+  Resources,
+  UnitType,
+} from '@last-signal/game-core';
 import {
   BUILDING_TYPES,
   DEFAULT_CONFIG,
@@ -8,7 +15,11 @@ import {
   RESOURCE_KINDS,
   calcBuildCost,
   calcNetRates,
+  calcTrainCost,
+  calcTroopFoodUpkeepPerHour,
+  scoutUnitForFaction,
   wouldStarveSettlement,
+  wouldStarveWithTroops,
 } from '@last-signal/game-core';
 import type { INestApplication } from '@nestjs/common';
 import { getConnectionToken, getModelToken } from '@nestjs/mongoose';
@@ -29,7 +40,8 @@ import { Settlement } from '../schemas/settlement.schema';
 import type { SettlementDocument } from '../schemas/settlement.schema';
 import { SchedulerService } from '../scheduler/scheduler.service';
 import { BuildCompleteHandler } from './handlers/build-complete.handler';
-import { ACTIVE_BUILD_SLOTS, WAITING_QUEUE_SLOTS } from './settlements.constants';
+import { TrainingCompleteHandler } from './handlers/training-complete.handler';
+import { ACTIVE_BUILD_SLOTS, MAX_TRAIN_COUNT, WAITING_QUEUE_SLOTS } from './settlements.constants';
 
 // Proves the M1a.7 acceptance criterion end to end: a build starts and completes through
 // the REST API against a real MongoDB replica set. Follows the exact pattern already
@@ -52,6 +64,7 @@ describe('Settlements (integration)', () => {
   let eventModel: Model<GameEventDocument>;
   let schedulerService: SchedulerService;
   let buildCompleteHandler: BuildCompleteHandler;
+  let trainingCompleteHandler: TrainingCompleteHandler;
   let activeBuildSlots: number;
 
   const config: GameConfig = DEFAULT_CONFIG;
@@ -69,6 +82,9 @@ describe('Settlements (integration)', () => {
     process.env['MONGODB_URI'] = replSet.getUri('last-signal-settlements-test');
     // The real 1s timer would race this suite's manual `runOnce()` calls.
     process.env['SCHEDULER_ENABLED'] = 'false';
+    // NPC seeding is covered by its own suite (`npc/npc-seeder.integration.spec.ts`) — off
+    // here so it never contends with this file's own settlement/build-queue fixtures.
+    process.env['WORLD_NPC_COUNT'] = '0';
 
     moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
@@ -81,6 +97,7 @@ describe('Settlements (integration)', () => {
     eventModel = moduleRef.get(getModelToken(GameEvent.name));
     schedulerService = moduleRef.get(SchedulerService);
     buildCompleteHandler = moduleRef.get(BuildCompleteHandler);
+    trainingCompleteHandler = moduleRef.get(TrainingCompleteHandler);
     activeBuildSlots = moduleRef.get(ACTIVE_BUILD_SLOTS);
   }, 60_000);
 
@@ -89,6 +106,7 @@ describe('Settlements (integration)', () => {
     await replSet.stop();
     delete process.env['MONGODB_URI'];
     delete process.env['SCHEDULER_ENABLED'];
+    delete process.env['WORLD_NPC_COUNT'];
   }, 60_000);
 
   afterEach(async () => {
@@ -274,6 +292,81 @@ describe('Settlements (integration)', () => {
       { $set: { dueAt: Date.now() - 1_000 } },
     );
     await schedulerService.runOnce();
+  }
+
+  // A settlement-fixture counter, so every `registerFaction` call below gets a unique
+  // display name — `AccountsService.register` enforces name uniqueness, and every test in
+  // this file runs against the same shared `accounts` collection until `afterEach` clears it.
+  let registeredNameCounter = 0;
+
+  // Turns a fresh guest session into a real, factioned account via the real
+  // `POST /api/accounts/register` endpoint (§13 of the M1 record; see
+  // `accounts.integration.spec.ts` for the endpoint's own dedicated coverage) — `trainScouts`
+  // needs a real `account.faction`, not a guest's `undefined` one, for every case except the
+  // "no faction at all" validation test itself.
+  async function registerFaction(cookie: string[], faction: Faction): Promise<void> {
+    registeredNameCounter += 1;
+    const response = await request(app.getHttpServer())
+      .post('/api/accounts/register')
+      .set('Cookie', cookie)
+      .send({ name: `Recruit-${registeredNameCounter}`, faction });
+    expect(response.status).toBe(200);
+  }
+
+  // Same shape as `foodSafeBuildings()` plus a Barracks — Barracks itself carries zero Food
+  // upkeep weight (`packages/game-core/src/config/buildings.ts`'s own comment on
+  // `barracks.foodUpkeepWeight`), so this fixture is exactly as Food-safe as
+  // `foodSafeBuildings()` for scout upkeep on top, up to whatever count each test computes
+  // against the live config (never a hardcoded number — see `pickStarvingTrainCount` below).
+  function foodSafeBarracksBuildings(): BuildingLevels {
+    return [...foodSafeBuildings(), { type: 'barracks', level: 1 }];
+  }
+
+  function foodSafeBarracksSettlement(
+    accountId: Types.ObjectId,
+    resources = ABUNDANT_RESOURCES,
+  ): Promise<string> {
+    return seedSettlement(accountId, {
+      buildings: foodSafeBarracksBuildings().map((b) => ({ ...b })),
+      resources,
+    });
+  }
+
+  function postTrain(settlementId: string, cookie: string[], unitType: string, count: number) {
+    return request(app.getHttpServer())
+      .post(`/api/settlements/${settlementId}/train`)
+      .set('Cookie', cookie)
+      .send({ unitType, count });
+  }
+
+  // Forces the pending `trainingComplete` event for `orderId` overdue and runs the
+  // scheduler once — same determinism trick as `completeQueueItem`. Deliberately keyed on
+  // `payload.orderId` alone (not also `remainingCountAtSchedule`): the order's *current*
+  // event is whichever one is still `due` for that order, and each call in a loop is meant
+  // to advance whichever unit is next, without the caller having to track the count itself.
+  async function completeTrainingUnit(orderId: string): Promise<void> {
+    await eventModel.updateOne(
+      { type: 'trainingComplete', 'payload.orderId': orderId, status: 'due' },
+      { $set: { dueAt: Date.now() - 1_000 } },
+    );
+    await schedulerService.runOnce();
+  }
+
+  // The minimal `count` such that training `count` of `unitType` on top of `existingTroops`
+  // would trip the Food gate (`wouldStarveWithTroops`), derived from the live `GameConfig`
+  // rather than a hardcoded number — mirrors `pickFoodSafeGreenhouseLevel`'s own reasoning.
+  // `count - 1` is then guaranteed to be the largest order that still fits.
+  function pickStarvingTrainCount(
+    buildings: BuildingLevels,
+    unitType: UnitType,
+    existingTroops: ReadonlyArray<{ unitType: UnitType; count: number }> = [],
+  ): number {
+    for (let count = 1; count <= MAX_TRAIN_COUNT; count += 1) {
+      if (wouldStarveWithTroops(config, buildings, existingTroops, [{ unitType, count }])) {
+        return count;
+      }
+    }
+    throw new Error('pickStarvingTrainCount: no starving count found within MAX_TRAIN_COUNT');
   }
 
   it('acceptance criterion: a build starts and completes through the API', async () => {
@@ -659,5 +752,345 @@ describe('Settlements (integration)', () => {
         process.env['NODE_ENV'] = previousNodeEnv;
       }
     }
+  });
+
+  // M2b.2: the `trainScouts` command, unit-by-unit completion, and troop Food upkeep.
+  // Nested in the same file/describe (shares `beforeAll`'s app/DB boot and every helper
+  // above) rather than a separate spec file — same convention the build-command tests
+  // above already establish for this module.
+  describe('Scout training (M2b.2)', () => {
+    const RAIDER_FACTION: Faction = 'raiders';
+    // Derived from the live config, never hardcoded as `'lookout'` — see every other
+    // fixture in this file for the same "derive, don't hardcode" convention.
+    const raiderScout = scoutUnitForFaction(config, RAIDER_FACTION).type;
+
+    it('happy path: resources deducted at enqueue, units credited one at a time, Food upkeep drops', async () => {
+      const { accountId, cookie } = await createGuestSession();
+      await registerFaction(cookie, RAIDER_FACTION);
+      const settlementId = await foodSafeBarracksSettlement(accountId);
+
+      const before = await getState(settlementId, cookie);
+      expect(before.status).toBe(200);
+      expect(before.body.troops).toEqual([]);
+      const trainCount = 3;
+      const expectedCost = calcTrainCost(config, raiderScout, trainCount);
+
+      const trainResponse = await postTrain(settlementId, cookie, raiderScout, trainCount);
+      expect(trainResponse.status).toBe(200);
+      const expectedAfterDeduction: Resources = {
+        scrap: before.body.resources.values.scrap - expectedCost.scrap,
+        fuel: before.body.resources.values.fuel - expectedCost.fuel,
+        electronics: before.body.resources.values.electronics - expectedCost.electronics,
+        food: before.body.resources.values.food - expectedCost.food,
+      };
+      expectResourcesCloseTo(
+        trainResponse.body.resources.values,
+        expectedAfterDeduction,
+        foodSafeBarracksBuildings(),
+      );
+      expect(trainResponse.body.trainingQueue).toHaveLength(1);
+      const order = trainResponse.body.trainingQueue[0];
+      expect(order.unitType).toBe(raiderScout);
+      expect(order.totalCount).toBe(trainCount);
+      expect(order.remainingCount).toBe(trainCount);
+      expect(order.cost).toMatchObject(expectedCost);
+      expect(order.nextCompletesAt).toBeGreaterThan(Date.now());
+      expect(trainResponse.body.troops).toEqual([]);
+
+      const scheduledEvent = await eventModel.findOne({
+        type: 'trainingComplete',
+        'payload.orderId': order.id,
+      });
+      expect(scheduledEvent).not.toBeNull();
+      expect(scheduledEvent?.status).toBe('due');
+
+      // Complete the first unit and assert the INTERMEDIATE state (not just the end
+      // state) — this is the M2b.2 acceptance criterion: units land one at a time, and
+      // Food upkeep visibly drops the moment the first scout is credited, derived from
+      // `calcTroopFoodUpkeepPerHour`, never a hardcoded number.
+      await completeTrainingUnit(order.id);
+      const afterFirst = await getState(settlementId, cookie);
+      expect(afterFirst.status).toBe(200);
+      expect(afterFirst.body.troops).toEqual([{ unitType: raiderScout, count: 1 }]);
+      expect(afterFirst.body.trainingQueue).toHaveLength(1);
+      expect(afterFirst.body.trainingQueue[0].remainingCount).toBe(trainCount - 1);
+      expect(afterFirst.body.trainingQueue[0].totalCount).toBe(trainCount);
+      const expectedNetFoodAfterFirst =
+        before.body.netFoodPerHour -
+        calcTroopFoodUpkeepPerHour(config, [{ unitType: raiderScout, count: 1 }]);
+      expect(afterFirst.body.netFoodPerHour).toBeCloseTo(expectedNetFoodAfterFirst, 6);
+
+      // Drive the remaining two units to completion, one event at a time.
+      await completeTrainingUnit(order.id);
+      await completeTrainingUnit(order.id);
+
+      const after = await getState(settlementId, cookie);
+      expect(after.status).toBe(200);
+      expect(after.body.troops).toEqual([{ unitType: raiderScout, count: trainCount }]);
+      expect(after.body.trainingQueue).toHaveLength(0);
+      const expectedNetFoodAfterAll =
+        before.body.netFoodPerHour -
+        calcTroopFoodUpkeepPerHour(config, [{ unitType: raiderScout, count: trainCount }]);
+      expect(after.body.netFoodPerHour).toBeCloseTo(expectedNetFoodAfterAll, 6);
+
+      const doneEvent = await eventModel.findById(scheduledEvent?._id);
+      expect(doneEvent?.status).toBe('done');
+    });
+
+    it('the Food gate: a batch that would push net Food negative is rejected with wouldStarve; a smaller batch is accepted', async () => {
+      const { accountId, cookie } = await createGuestSession();
+      await registerFaction(cookie, RAIDER_FACTION);
+      const buildings = foodSafeBarracksBuildings();
+      const starvingCount = pickStarvingTrainCount(buildings, raiderScout);
+      const settlementId = await foodSafeBarracksSettlement(accountId);
+
+      const starvingResponse = await postTrain(settlementId, cookie, raiderScout, starvingCount);
+      expect(starvingResponse.status).toBe(400);
+      expect(starvingResponse.body.error.key).toBe('errors.training.wouldStarve');
+      const afterStarving = await getState(settlementId, cookie);
+      expect(afterStarving.body.trainingQueue).toHaveLength(0);
+
+      const safeCount = starvingCount - 1;
+      expect(safeCount).toBeGreaterThan(0);
+      const safeResponse = await postTrain(settlementId, cookie, raiderScout, safeCount);
+      expect(safeResponse.status).toBe(200);
+      expect(safeResponse.body.trainingQueue).toHaveLength(1);
+      expect(safeResponse.body.trainingQueue[0].totalCount).toBe(safeCount);
+    });
+
+    it('validation: an unrecognised unit type is rejected with unknownType and charges nothing', async () => {
+      const { accountId, cookie } = await createGuestSession();
+      await registerFaction(cookie, RAIDER_FACTION);
+      const settlementId = await foodSafeBarracksSettlement(accountId);
+      const before = await getState(settlementId, cookie);
+
+      const response = await postTrain(settlementId, cookie, 'notARealUnit', 1);
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.key).toBe('errors.training.unknownType');
+      const after = await getState(settlementId, cookie);
+      expectResourcesCloseTo(
+        after.body.resources.values,
+        before.body.resources.values,
+        foodSafeBarracksBuildings(),
+      );
+      expect(after.body.trainingQueue).toHaveLength(0);
+    });
+
+    it("validation: training another faction's unit is rejected with wrongFaction and charges nothing", async () => {
+      const { accountId, cookie } = await createGuestSession();
+      await registerFaction(cookie, RAIDER_FACTION);
+      const settlementId = await foodSafeBarracksSettlement(accountId);
+      const before = await getState(settlementId, cookie);
+      const otherFactionScout = scoutUnitForFaction(config, 'nomads').type;
+
+      const response = await postTrain(settlementId, cookie, otherFactionScout, 1);
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.key).toBe('errors.training.wrongFaction');
+      const after = await getState(settlementId, cookie);
+      expectResourcesCloseTo(
+        after.body.resources.values,
+        before.body.resources.values,
+        foodSafeBarracksBuildings(),
+      );
+      expect(after.body.trainingQueue).toHaveLength(0);
+    });
+
+    it('validation: a guest with no faction at all is rejected with noFaction and charges nothing', async () => {
+      const { accountId, cookie } = await createGuestSession();
+      const settlementId = await foodSafeBarracksSettlement(accountId);
+      const before = await getState(settlementId, cookie);
+
+      const response = await postTrain(settlementId, cookie, raiderScout, 1);
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.key).toBe('errors.training.noFaction');
+      const after = await getState(settlementId, cookie);
+      expectResourcesCloseTo(
+        after.body.resources.values,
+        before.body.resources.values,
+        foodSafeBarracksBuildings(),
+      );
+      expect(after.body.trainingQueue).toHaveLength(0);
+    });
+
+    it('validation: count 0/negative/non-integer/over-the-cap are each rejected with invalidCount and charge nothing', async () => {
+      const { accountId, cookie } = await createGuestSession();
+      await registerFaction(cookie, RAIDER_FACTION);
+      const settlementId = await foodSafeBarracksSettlement(accountId);
+      const before = await getState(settlementId, cookie);
+
+      for (const badCount of [0, -1, 1.5, MAX_TRAIN_COUNT + 1]) {
+        const response = await postTrain(settlementId, cookie, raiderScout, badCount);
+        expect(response.status, `count=${badCount}`).toBe(400);
+        expect(response.body.error.key, `count=${badCount}`).toBe('errors.training.invalidCount');
+      }
+
+      const after = await getState(settlementId, cookie);
+      expectResourcesCloseTo(
+        after.body.resources.values,
+        before.body.resources.values,
+        foodSafeBarracksBuildings(),
+      );
+      expect(after.body.trainingQueue).toHaveLength(0);
+    });
+
+    it('validation: no Barracks is rejected with noBarracks and charges nothing', async () => {
+      const { accountId, cookie } = await createGuestSession();
+      await registerFaction(cookie, RAIDER_FACTION);
+      const settlementId = await foodSafeSettlement(accountId);
+      const before = await getState(settlementId, cookie);
+
+      const response = await postTrain(settlementId, cookie, raiderScout, 1);
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.key).toBe('errors.training.noBarracks');
+      const after = await getState(settlementId, cookie);
+      expectResourcesCloseTo(
+        after.body.resources.values,
+        before.body.resources.values,
+        foodSafeBuildings(),
+      );
+      expect(after.body.trainingQueue).toHaveLength(0);
+    });
+
+    it('validation: insufficient resources is rejected with insufficientResources and charges nothing', async () => {
+      const { accountId, cookie } = await createGuestSession();
+      await registerFaction(cookie, RAIDER_FACTION);
+      const zero = { scrap: 0, fuel: 0, electronics: 0, food: 0 };
+      const settlementId = await foodSafeBarracksSettlement(accountId, zero);
+
+      const response = await postTrain(settlementId, cookie, raiderScout, 1);
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.key).toBe('errors.training.insufficientResources');
+      const state = await getState(settlementId, cookie);
+      expect(state.body.trainingQueue).toHaveLength(0);
+      expectResourcesCloseTo(state.body.resources.values, zero, foodSafeBarracksBuildings());
+    });
+
+    it('one active order: a second order while one is running is rejected with queueBusy', async () => {
+      const { accountId, cookie } = await createGuestSession();
+      await registerFaction(cookie, RAIDER_FACTION);
+      const settlementId = await foodSafeBarracksSettlement(accountId);
+
+      const first = await postTrain(settlementId, cookie, raiderScout, 1);
+      expect(first.status).toBe(200);
+
+      const second = await postTrain(settlementId, cookie, raiderScout, 1);
+      expect(second.status).toBe(400);
+      expect(second.body.error.key).toBe('errors.training.queueBusy');
+
+      const state = await getState(settlementId, cookie);
+      expect(state.body.trainingQueue).toHaveLength(1);
+      // Only the first order's cost was ever deducted — bounded via the settlement's own
+      // live rates, since two separate settle instants sit between `first` and this
+      // `getState` call (see `expectResourcesCloseTo`'s comment).
+      const singleOrderCost = calcTrainCost(config, raiderScout, 1);
+      const expectedAfterOneDeduction: Resources = {
+        scrap: ABUNDANT_RESOURCES.scrap - singleOrderCost.scrap,
+        fuel: ABUNDANT_RESOURCES.fuel - singleOrderCost.fuel,
+        electronics: ABUNDANT_RESOURCES.electronics - singleOrderCost.electronics,
+        food: ABUNDANT_RESOURCES.food - singleOrderCost.food,
+      };
+      expectResourcesCloseTo(
+        state.body.resources.values,
+        expectedAfterOneDeduction,
+        foodSafeBarracksBuildings(),
+      );
+    });
+
+    it('idempotency: replaying the trainingComplete handler for the same event credits one unit, not two', async () => {
+      const { accountId, cookie } = await createGuestSession();
+      await registerFaction(cookie, RAIDER_FACTION);
+      const settlementId = await foodSafeBarracksSettlement(accountId);
+
+      // count=2, not 1: the order must still exist after the first credited unit so the
+      // second `handle` call has a live `remainingCount` to (correctly) fail to match —
+      // see the handler's own class comment on why "item still exists" alone isn't a
+      // sufficient guard for this handler, unlike `BuildCompleteHandler`.
+      const trainResponse = await postTrain(settlementId, cookie, raiderScout, 2);
+      const orderId = trainResponse.body.trainingQueue[0].id as string;
+      const event = await eventModel.findOne({
+        type: 'trainingComplete',
+        'payload.orderId': orderId,
+      });
+      expect(event).not.toBeNull();
+      if (!event) throw new Error('unreachable');
+      const confirmedEvent = event;
+
+      async function replay(): Promise<void> {
+        const session = await connection.startSession();
+        try {
+          await session.withTransaction(async () => {
+            await trainingCompleteHandler.handle(confirmedEvent, session);
+          });
+        } finally {
+          await session.endSession();
+        }
+      }
+
+      await replay();
+      const afterFirst = await settlementModel.findById(settlementId);
+      expect(afterFirst?.troops.find((t) => t.unitType === raiderScout)?.count).toBe(1);
+      expect(afterFirst?.trainingQueue[0]?.remainingCount).toBe(1);
+
+      await replay();
+      const afterSecond = await settlementModel.findById(settlementId);
+      expect(afterSecond?.troops.find((t) => t.unitType === raiderScout)?.count).toBe(1);
+      expect(afterSecond?.trainingQueue[0]?.remainingCount).toBe(1);
+    });
+
+    it('the race: two concurrent train requests that can only afford one — exactly one succeeds, resources never go negative, exactly one order exists', async () => {
+      const { accountId, cookie } = await createGuestSession();
+      await registerFaction(cookie, RAIDER_FACTION);
+      const cost = calcTrainCost(config, raiderScout, 1);
+      const settlementId = await foodSafeBarracksSettlement(accountId, {
+        ...cost,
+        food: ABUNDANT_RESOURCES.food,
+      });
+
+      const [responseA, responseB] = await Promise.all([
+        postTrain(settlementId, cookie, raiderScout, 1),
+        postTrain(settlementId, cookie, raiderScout, 1),
+      ]);
+
+      const statuses = [responseA.status, responseB.status].sort();
+      expect(statuses).toEqual([200, 400]);
+      const failure = responseA.status === 400 ? responseA : responseB;
+      // Both requests read an empty training queue and an affordable batch before either
+      // commits; the loser's version-guarded write then loses the race and `runCommand`
+      // retries the whole command from scratch. Unlike the build race (a second queue
+      // slot is always available, so the retrying loser genuinely fails affordability),
+      // here `MAX_ACTIVE_TRAINING_ORDERS = 1` means the retry finds the queue already
+      // occupied by the winner and trips `queueBusy` deterministically, before
+      // affordability is even evaluated — this module's own validation order (see
+      // `SettlementsService.trainScouts`'s comment) checks the queue cap before cost.
+      expect(failure.body.error.key).toBe('errors.training.queueBusy');
+
+      const state = await settlementModel.findById(settlementId);
+      expect(state).not.toBeNull();
+      if (!state) throw new Error('unreachable');
+      for (const kind of ['scrap', 'fuel', 'electronics', 'food'] as const) {
+        expect(state.resources.values[kind]).toBeGreaterThanOrEqual(0);
+      }
+      expect(state.trainingQueue).toHaveLength(1);
+    });
+
+    it('ownership: another account cannot train scouts on a settlement it does not own', async () => {
+      const owner = await createGuestSession();
+      await registerFaction(owner.cookie, RAIDER_FACTION);
+      const intruder = await createGuestSession();
+      await registerFaction(intruder.cookie, RAIDER_FACTION);
+      const settlementId = await foodSafeBarracksSettlement(owner.accountId);
+
+      const response = await postTrain(settlementId, intruder.cookie, raiderScout, 1);
+
+      expect(response.status).toBe(404);
+      expect(response.body.error.key).toBe('errors.settlement.notFound');
+      const state = await settlementModel.findById(settlementId);
+      expect(state?.trainingQueue).toHaveLength(0);
+    });
   });
 });

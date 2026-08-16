@@ -7,6 +7,10 @@
   --bone: #e8d9b0;
   --toxic: #7fd13b;
   --danger: #b33a2b;
+  /* A touch darker than --bg-deep, used only for the Map screen's "beyond the world" void
+     (M2c.1 edge fix): the bounded map has a deliberate edge (§1), so the area outside it needs
+     to read as "this is off the edge of the wasteland" rather than "the map failed to render". */
+  --void: #0c0805;
 
   color-scheme: dark;
 }
@@ -496,8 +500,424 @@ img {
   cursor: not-allowed;
 }
 
+.bottom-nav__item--enabled {
+  opacity: 0.75;
+  cursor: pointer;
+}
+
 .bottom-nav__item--active {
   opacity: 1;
   color: var(--accent);
   cursor: default;
+}
+
+.bottom-nav__badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  font-size: 0.6rem;
+  color: var(--bg-deep);
+  background: var(--accent);
+  border-radius: 8px;
+}
+
+/* Map screen (M2c.1) */
+
+.map-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 8px;
+}
+
+.map-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.map-jump {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.map-jump__input {
+  width: 64px;
+  flex: 0 0 auto;
+  text-align: center;
+}
+
+.map-jump__error {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--danger);
+}
+
+.map-controls__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.map-zoom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-zoom__button {
+  min-width: 44px;
+  padding: 10px;
+}
+
+.map-zoom__level {
+  font-size: 0.75rem;
+  letter-spacing: 0.03em;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+.map-viewport {
+  position: relative;
+  overflow: hidden;
+  height: min(60vh, 480px);
+  background-color: var(--bg-deep);
+  /* The "beyond the world" void: a subtle diagonal hatch in a darker tone than the viewport's
+     own background. Tiles are opaque and layered on top (position: absolute), so this only
+     ever shows through where no real tile exists — i.e. exactly the area outside the bounded
+     grid (§1) — without any coordinate math of its own. Reads as "this is the edge of the
+     wasteland", not as a rendering gap. */
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--void) 0,
+    var(--void) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  border: 3px solid var(--panel-edge);
+  image-rendering: pixelated;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+
+.map-viewport:active {
+  cursor: grabbing;
+}
+
+/* The world's edge is inside the viewport on at least one side (`isAtGridEdge`) — echo the
+   per-tile boundary line on the frame itself, reinforcing "you've reached the edge". */
+.map-viewport--at-edge {
+  border-color: var(--accent);
+}
+
+.map-tile {
+  position: absolute;
+  box-sizing: border-box;
+  box-shadow: inset -1px -1px 0 rgba(0, 0, 0, 0.35);
+}
+
+/* The last real row/column of tiles along the bounded grid's boundary (§1) gets a solid
+   accent line on its outward-facing side — the wasteland's edge, drawn deliberately rather
+   than left to read as empty space. A corner tile combines two of these. */
+.map-tile--edge-n {
+  border-top: 2px solid var(--accent);
+}
+
+.map-tile--edge-s {
+  border-bottom: 2px solid var(--accent);
+}
+
+.map-tile--edge-w {
+  border-left: 2px solid var(--accent);
+}
+
+.map-tile--edge-e {
+  border-right: 2px solid var(--accent);
+}
+
+.map-marker {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.map-marker::after {
+  content: '';
+  display: block;
+  box-sizing: border-box;
+}
+
+.map-marker--settlement::after {
+  width: 60%;
+  height: 60%;
+  background: var(--bone);
+  border: 2px solid var(--panel-edge);
+}
+
+.map-marker--oasis::after {
+  width: 46%;
+  height: 46%;
+  border-radius: 50%;
+  background: var(--toxic);
+  border: 1px solid var(--panel-edge);
+  opacity: 0.85;
+}
+
+.map-marker--raiders::after {
+  background: var(--danger);
+}
+
+.map-marker--engineers::after {
+  background: var(--teal);
+}
+
+.map-marker--nomads::after {
+  background: var(--toxic);
+}
+
+.map-marker--side-beacon::after {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.map-marker--side-silence::after {
+  box-shadow: 0 0 0 2px var(--panel-edge);
+  opacity: 0.7;
+}
+
+.map-marker--own::after {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent);
+}
+
+/* Tile info sheet + send-scout flow (M2c.2) */
+
+.tile-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(12, 8, 5, 0.72);
+}
+
+.tile-sheet {
+  width: 100%;
+  max-width: 480px;
+  max-height: 80vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--panel);
+  border: 3px solid var(--panel-edge);
+  border-bottom: none;
+}
+
+.tile-sheet__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tile-sheet__coordinates {
+  font-size: 0.85rem;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+}
+
+.tile-sheet__close {
+  min-height: 36px;
+  padding: 6px 12px;
+}
+
+.tile-sheet__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tile-sheet__row {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.tile-sheet__note {
+  margin: 0;
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+
+.tile-sheet__scout {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 2px solid var(--panel-edge);
+}
+
+.tile-sheet__reason {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--danger);
+}
+
+.tile-sheet__available,
+.tile-sheet__travel-time {
+  margin: 0;
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+
+/* Own-movements overlay (M2c.2) */
+
+.movements-overlay__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.movement-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-deep);
+  border: 2px solid var(--panel-edge);
+  font-size: 0.8rem;
+}
+
+.movement-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.movement-row__status {
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.movement-row__countdown {
+  font-variant-numeric: tabular-nums;
+}
+
+.movement-row__units {
+  opacity: 0.8;
+}
+
+/* Reports tab (M2c.3) */
+
+.reports-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 8px;
+}
+
+.reports-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.report-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-deep);
+  border: 2px solid var(--panel-edge);
+  color: var(--bone);
+  font-family: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.report-row--unread {
+  border-color: var(--accent);
+}
+
+.report-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.report-row__type {
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.report-row__time {
+  opacity: 0.7;
+  font-size: 0.7rem;
+}
+
+.report-row__badge {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  font-size: 0.65rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--bg-deep);
+  background: var(--accent);
+}
+
+.report-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.report-detail__back {
+  align-self: flex-start;
+}
+
+.report-detail__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.report-detail__intel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 2px solid var(--panel-edge);
+}
+
+.report-detail__units,
+.report-detail__resources,
+.report-detail__buildings {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.8rem;
 }

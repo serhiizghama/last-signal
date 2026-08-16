@@ -38,6 +38,8 @@ function settlementFor(account: AccountView): SettlementStateView {
     netFoodPerHour: 0,
     storageCaps: { scrap: 0, fuel: 0, electronics: 0, food: 0 },
     buildQueue: [],
+    troops: [],
+    trainingQueue: [],
     influence: 0,
     serverTime: 0,
   };
@@ -108,6 +110,13 @@ describe('Onboarding', () => {
           const settlement = settlementFor(account ?? guestAccount());
           settlements = [settlement];
           return Promise.resolve(jsonResponse(settlement));
+        }
+        // `BottomNav`'s Reports unread badge (M2c.3), reached once the flow lands on the base
+        // screen — irrelevant to this walkthrough, kept stable/empty.
+        if (url.startsWith('/api/reports')) {
+          return Promise.resolve(
+            jsonResponse({ reports: [], nextCursor: null, unreadCount: 0, serverTime: 0 }),
+          );
         }
         return Promise.reject(new Error(`Unhandled request: ${method} ${url}`));
       }),

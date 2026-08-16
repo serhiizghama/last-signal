@@ -71,6 +71,11 @@ the project moving milestone by milestone.
    `docs/PROGRESS.md` (what was built, how it was verified, known gaps/debt), and
    wait for the user's personal review (they review on Opus) before starting the
    next milestone.
+7. Once the milestone is reviewed and committed: move its detailed per-step log
+   entries **verbatim** into `docs/archive/PROGRESS_*.md` (owner decision,
+   2026-08-16), leaving only the condensed milestone summary in
+   `docs/PROGRESS.md`. The live log carries per-step detail for the current
+   milestone only; archived detail is never deleted, only relocated.
 
 ## Hard rules
 

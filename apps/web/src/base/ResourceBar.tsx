@@ -50,6 +50,7 @@ function ResourceTile({ kind, settlement, live }: ResourceTileProps): ReactEleme
         live.buildings,
         { values: live.values, lastCalcAt: live.now },
         kind,
+        live.troops,
       );
 
   const modifiers = [isFull && 'resource-tile--full', isFoodDeficit && 'resource-tile--warning']

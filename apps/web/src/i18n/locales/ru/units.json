@@ -1,0 +1,11 @@
+{
+  "lookout": {
+    "name": "Дозорный"
+  },
+  "surveyorDrone": {
+    "name": "Дрон-разведчик"
+  },
+  "falconer": {
+    "name": "Сокольничий"
+  }
+}

@@ -164,6 +164,7 @@ export function BuildingList({ settlement, live }: BuildingListProps): ReactElem
             live.values,
             live.now,
             type,
+            live.troops,
           );
           return (
             <BuildingCard

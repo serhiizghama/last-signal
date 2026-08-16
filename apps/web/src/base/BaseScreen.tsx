@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { AccountView, SettlementStateView } from '../api/types';
+import type { NavTab } from './BottomNav';
 import { BottomNav } from './BottomNav';
 import { BuildQueueList } from './BuildQueueList';
 import { BuildingList } from './BuildingList';
@@ -11,6 +12,7 @@ import { useLiveResources } from './useLiveResources';
 interface BaseScreenProps {
   settlement: SettlementStateView;
   account: AccountView;
+  onNavigateTab: (tab: NavTab) => void;
 }
 
 /**
@@ -18,7 +20,7 @@ interface BaseScreenProps {
  * with build actions, the build queue with countdowns, and the bottom nav shell. A player
  * can grow their settlement end to end from here.
  */
-export function BaseScreen({ settlement, account }: BaseScreenProps): ReactElement {
+export function BaseScreen({ settlement, account, onNavigateTab }: BaseScreenProps): ReactElement {
   const { t } = useTranslation();
   const live = useLiveResources(settlement);
 
@@ -38,7 +40,7 @@ export function BaseScreen({ settlement, account }: BaseScreenProps): ReactEleme
 
       <BuildingList settlement={settlement} live={live} />
 
-      <BottomNav />
+      <BottomNav active="base" onNavigate={onNavigateTab} />
     </div>
   );
 }

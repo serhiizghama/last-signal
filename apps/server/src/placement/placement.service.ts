@@ -1,49 +1,68 @@
-import { Injectable } from '@nestjs/common';
+import type { GameConfig, Tile } from '@last-signal/game-core';
+import { isSettleable, pickSpawnTile, terrainAt } from '@last-signal/game-core';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { Model } from 'mongoose';
 
-import type { PlacementCounterDocument } from '../schemas/placement-counter.schema';
-import { PlacementCounter } from '../schemas/placement-counter.schema';
-import { PLACEMENT_COUNTER_KEY } from './placement.constants';
-import type { Tile } from './placement.geometry';
-import { pickOuterRingTile } from './placement.geometry';
+import { GAME_CONFIG } from '../game-config/game-config.tokens';
+import type { OasisDocument } from '../schemas/oasis.schema';
+import { Oasis } from '../schemas/oasis.schema';
+import type { SettlementDocument } from '../schemas/settlement.schema';
+import { Settlement } from '../schemas/settlement.schema';
+import { WorldService } from '../world/world.service';
+import { PlacementExhaustedError } from './placement.errors';
+import type { PlacementRng } from './placement.tokens';
+import { PLACEMENT_RNG } from './placement.tokens';
 
-// Thin DB-backed wrapper around the pure geometry in `placement.geometry.ts`: owns the
-// per-world counter that seeds the deterministic tile mapping. Kept deliberately small so
-// the geometry itself stays unit-testable with zero DB dependency (see
-// `placement.geometry.spec.ts`).
+// The center-out expanding annulus spawn policy (`docs/M2_DESIGN_DECISIONS.md` §3),
+// replacing M1b's deterministic outer-ring rule — one policy for humans and NPCs alike. Every
+// actual game rule (the annulus geometry, settleability) lives in `game-core`'s
+// `pickSpawnTile` + `isSettleable`; this service's only job is feeding them real data (the
+// world seed, the live settlement/oasis tiles) and turning "no legal tile anywhere on the
+// grid" into the existing HTTP error. No placement rule is reimplemented server-side here.
 @Injectable()
 export class PlacementService {
   constructor(
-    @InjectModel(PlacementCounter.name)
-    private readonly counterModel: Model<PlacementCounterDocument>,
+    @InjectModel(Settlement.name) private readonly settlementModel: Model<SettlementDocument>,
+    @InjectModel(Oasis.name) private readonly oasisModel: Model<OasisDocument>,
+    @Inject(GAME_CONFIG) private readonly config: GameConfig,
+    @Inject(WorldService) private readonly worldService: WorldService,
+    @Inject(PLACEMENT_RNG) private readonly rng: PlacementRng,
   ) {}
 
-  // Pure — exposed on the service too so callers don't need to import the geometry module
-  // directly.
-  pickTile(counter: number): Tile {
-    return pickOuterRingTile(counter);
-  }
+  // Draws one fresh candidate tile from the current spawn annulus (§3: uniform within
+  // `[max(0, R(n) - W), R(n)]`, `n` = the current total settlement count, growing outward if
+  // that band has no legal tile). Loads the world seed, every existing settlement's
+  // coordinates, and every oasis tile ONCE per call — not once per candidate `pickSpawnTile`
+  // draws internally in its own retry loop — since at this scale (~150 settlements, 24
+  // oases) that's a handful of KB, and reloading per draw would turn one placement attempt
+  // into dozens of redundant queries for no benefit (§12: "map fetch cost ... negligible"
+  // applies here too).
+  async findTile(): Promise<Tile> {
+    const [world, settlementDocs, oasisDocs] = await Promise.all([
+      this.worldService.getWorld(),
+      this.settlementModel.find({}, 'x y'),
+      this.oasisModel.find({}, 'x y'),
+    ]);
 
-  // Atomically increments and returns the shared counter. Deliberately NOT run inside the
-  // caller's settlement-creation transaction: if that transaction later aborts (e.g. the
-  // chosen tile collided with the unique `{x,y}` index), the `$inc` below would be rolled
-  // back right along with it — meaning a retry would draw the *same* counter value again
-  // and recompute the *same* candidate tile, looping forever on the same collision. Bumping
-  // the counter as its own tiny, always-committed operation guarantees every retry attempt
-  // (see `SettlementsService.createSettlement`) advances to a genuinely new tile. Gaps in
-  // the counter sequence from a failed/retried attempt are harmless — nothing requires it to
-  // be dense, only monotonically increasing and never reused.
-  async nextCounter(): Promise<number> {
-    const doc = await this.counterModel.findOneAndUpdate(
-      { key: PLACEMENT_COUNTER_KEY },
-      { $inc: { value: 1 } },
-      { upsert: true, returnDocument: 'after' },
-    );
-    if (!doc) {
-      // Unreachable: `upsert: true` + `returnDocument: 'after'` always returns a document.
-      throw new Error('PlacementService: counter increment returned no document');
+    const existingSettlements: Tile[] = settlementDocs.map((doc) => ({ x: doc.x, y: doc.y }));
+    const oasisTiles = new Set(oasisDocs.map((doc) => `${doc.x},${doc.y}`));
+
+    const isLegal = (tile: Tile): boolean =>
+      isSettleable(this.config, {
+        tile,
+        terrain: terrainAt(this.config, world.seed, tile.x, tile.y),
+        isOasis: oasisTiles.has(`${tile.x},${tile.y}`),
+        existingSettlements,
+      });
+
+    const tile = pickSpawnTile(this.config, existingSettlements.length, {
+      rng: this.rng,
+      isLegal,
+    });
+    if (!tile) {
+      throw new PlacementExhaustedError();
     }
-    return doc.value;
+    return tile;
   }
 }

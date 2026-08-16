@@ -1,10 +1,26 @@
-import type { BuildingLevels, BuildingType } from '@last-signal/game-core';
+import type { BuildingLevels, BuildingType, TroopCounts, UnitType } from '@last-signal/game-core';
 
-import type { SettlementBuildingView, SettlementBuildQueueItemView } from '../api/types';
+import type {
+  SettlementBuildingView,
+  SettlementBuildQueueItemView,
+  SettlementTroopView,
+} from '../api/types';
 
 /** The read-only `{type, level}` shape every `game-core` formula accepts, from the wire view. */
 export function toBuildingLevels(buildings: readonly SettlementBuildingView[]): BuildingLevels {
   return buildings.map((b) => ({ type: b.type, level: b.level }));
+}
+
+/**
+ * The read-only troop-list shape every `game-core` economy formula accepts (`settleResources`,
+ * `msUntilFull`, `wouldStarveSettlement`, `msUntilAffordable`), from the wire view. Mirrors
+ * `toBuildingLevels` above and the server's own `toTroopCounts`
+ * (`apps/server/src/settlements/settlements.util.ts`) — a pure reshape, not a second
+ * validation pass: entries here only ever come from the server's `troops` field, which only
+ * ever contains real `UnitType` values.
+ */
+export function toTroopCounts(troops: readonly SettlementTroopView[]): TroopCounts {
+  return troops.map((t) => ({ unitType: t.unitType as UnitType, count: t.count }));
 }
 
 /** Current level of `type`, or 0 when the settlement hasn't built it yet. */
