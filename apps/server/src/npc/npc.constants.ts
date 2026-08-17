@@ -21,10 +21,33 @@ export interface NpcBandDef {
   hasBarracks: boolean;
   /** Inclusive scout-count range, or `null` for the troopless `young` band. */
   scouts: readonly [number, number] | null;
+  /**
+   * Inclusive count range of the faction's own `defenseInfantry` unit (Torcher / Bulwark /
+   * Hunter-Sniper), or `null` for `young` (§19: no defenders at all — nothing can attack a
+   * `young` NPC's own faction-less-anything-yet settlement in a way defence would matter,
+   * and it has no Barracks to train from regardless).
+   */
+  defenders: readonly [number, number] | null;
+  /** Inclusive Hidden Cache level range, or `null` for `young` (no cache building placed). */
+  hiddenCache: readonly [number, number] | null;
 }
 
-// Draft numbers verbatim from §4. Order matters: `pickNpcBand`'s cumulative-weight roll walks
-// this array in order, so reordering it changes which band a given `rng()` draw lands in.
+// Draft numbers verbatim from §4 (commandCenter/resourceBuilding/scouts) and §19 (defenders/
+// hiddenCache). Order matters: `pickNpcBand`'s cumulative-weight roll walks this array in
+// order, so reordering it changes which band a given `rng()` draw lands in.
+//
+// `defenders` counts (M3a.7, §19): chosen by arithmetic against the raid-cost curve
+// (`x = min(1, (defPts/atkPts) ** 1.5)`), not picked from thin air — see
+// `docs/M3_DESIGN_DECISIONS.md` §19 and the M3a.7 step report for the full derivation.
+// Worked against the design record's own 100-Brute reference army (atkPts 4000, §0 row 1)
+// and the worst-case defence infantry (Bulwark, defInfantry 65 — the highest of the three
+// factions'): `developed` at its low end (10) costs a 100-Brute raid ~6% casualties (cheap,
+// meant to be a starter target); at its high end (20) ~16% (a real but affordable toll).
+// `veteran` at its low end (30) costs ~25%; at its high end (60) the raider needs
+// substantially more than 100 units to avoid `x` capping near 1 (defPts 3900 vs atkPts
+// 4000) — a "real committed army", exactly §19's intent. Every faction's own defence-
+// infantry `foodUpkeepPerHour` is 1 (verified in the catalogue), so this arithmetic is
+// faction-independent.
 export const NPC_BANDS: readonly NpcBandDef[] = [
   {
     band: 'young',
@@ -33,6 +56,8 @@ export const NPC_BANDS: readonly NpcBandDef[] = [
     resourceBuilding: [1, 3],
     hasBarracks: false,
     scouts: null,
+    defenders: null,
+    hiddenCache: null,
   },
   {
     band: 'developed',
@@ -41,6 +66,8 @@ export const NPC_BANDS: readonly NpcBandDef[] = [
     resourceBuilding: [4, 7],
     hasBarracks: true,
     scouts: [0, 3],
+    defenders: [10, 20],
+    hiddenCache: [2, 3],
   },
   {
     band: 'veteran',
@@ -49,6 +76,8 @@ export const NPC_BANDS: readonly NpcBandDef[] = [
     resourceBuilding: [6, 9],
     hasBarracks: true,
     scouts: [2, 6],
+    defenders: [30, 60],
+    hiddenCache: [4, 6],
   },
 ];
 

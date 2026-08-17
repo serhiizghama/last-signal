@@ -107,6 +107,29 @@ export class SettlementTroopEntry {
 
 const SettlementTroopEntrySchema = SchemaFactory.createForClass(SettlementTroopEntry);
 
+// A foreign contingent stationed here as support (M3 §3/§8, `docs/M3_DESIGN_DECISIONS.md`).
+// `_id: false` and explicit `@Prop`s, same convention as every other subdocument on this
+// schema. Nothing writes this array until the `support` movement ships in M3c — this step
+// (M3a.4) only adds the field and reads it for upkeep (`upkeepTroopsOf`,
+// `settlements.util.ts`), so `stationedTroops` is `[]` for every settlement today. The owner
+// (`ownerAccountId`) and origin (`fromSettlementId`) tags exist for two reasons that both
+// postdate this step: §8's recall/evict commands need to know who to send units back to and
+// where, and a starvation/battle loss report (§15) needs to be addressed to the right
+// supporter rather than the host.
+@Schema({ _id: false })
+export class StationedContingent {
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Account', required: true })
+  ownerAccountId!: Types.ObjectId;
+
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Settlement', required: true })
+  fromSettlementId!: Types.ObjectId;
+
+  @Prop({ type: [SettlementTroopEntrySchema], required: true, default: [] })
+  troops!: SettlementTroopEntry[];
+}
+
+const StationedContingentSchema = SchemaFactory.createForClass(StationedContingent);
+
 // One active scout-training order (M2b.2, `docs/M2_DESIGN_DECISIONS.md` §7). Shape mirrors
 // `BuildQueueItem` above — `_id: false`, explicit `@Prop` types — but tracks a *batch*
 // delivered one unit at a time via chained `trainingComplete` events rather than a single
@@ -192,18 +215,67 @@ export class Settlement {
 
   // Home troops (M2 §6 schema note). `[]` for every settlement created through the normal
   // human flow today (`SettlementsService.createSettlement` never writes it — M2b's
-  // `trainScouts`/movement handlers are the first real writers); NPC settlements are the
+  // `trainUnits`/movement handlers are the first real writers); NPC settlements are the
   // one exception, written directly by `NpcSeederService` at world genesis (M2a.5, §4:
   // "world genesis is god-mode by definition").
   @Prop({ type: [SettlementTroopEntrySchema], required: true, default: [] })
   troops!: SettlementTroopEntry[];
 
-  // Active scout-training orders (M2b.2, §7). At most `MAX_ACTIVE_TRAINING_ORDERS` (1 in
-  // M2, `settlements.constants.ts`) entries at a time — an array, not a single optional
-  // field, so M3 (the remaining 12 units, deeper queues) can widen the cap without a schema
-  // migration, the same way `buildQueue` already supports more than one item.
+  // Own units currently in transit — any movement, any leg, outbound or returning (M3 §3).
+  // This is a **denormalized counter**, not a derived view: its entire purpose is keeping
+  // Food upkeep a pure function of ONE settlement document (`upkeepTroopsOf` unions this with
+  // `troops` and `stationedTroops` below at every upkeep call site), so a command never has to
+  // cross-read every in-flight `Movement` document just to know what its own settlement owes
+  // in Food. It is maintained inside the SAME transaction as every send / arrive / return
+  // (`MovementsService.sendScouts`, `MovementArriveHandler`, `MovementReturnHandler`) —
+  // units move `troops → awayTroops` at send, back to `troops` on return, and losses are
+  // removed from `awayTroops` the instant they die rather than waiting for the return leg.
+  // Letting this drift from what the in-flight movements actually hold would silently
+  // re-open the exact exploit this field exists to close: before M3a.4, upkeep was computed
+  // from `troops` alone, so marching an army out made its Food cost vanish
+  // (`docs/M3_DESIGN_DECISIONS.md` §3, §19.1). `[]` for every settlement created before this
+  // field existed — no migration needed, Mongoose applies `default: []` on read (§19.10).
+  @Prop({ type: [SettlementTroopEntrySchema], required: true, default: [] })
+  awayTroops!: SettlementTroopEntry[];
+
+  // Foreign units stationed here as support, one entry per supporting contingent (M3 §3/§8).
+  // The host settlement pays this Food (owner decision 6) — see `upkeepTroopsOf`. Nothing
+  // writes this array yet: the `support` movement that populates it is M3c. `[]` for every
+  // settlement today, including ones created before this field existed (no migration needed,
+  // same as `awayTroops` above, §19.10).
+  @Prop({ type: [StationedContingentSchema], required: true, default: [] })
+  stationedTroops!: StationedContingent[];
+
+  // Active training orders (M2b.2, §7; generalized to the full roster in M3a.5, §2). At
+  // most `MAX_ACTIVE_ORDERS_PER_BUILDING` (1) entries *per training building* at a time,
+  // three buildings wide — an array, not a single optional field, so this widened the same
+  // way `buildQueue` already supports more than one item: no schema migration needed.
   @Prop({ type: [TrainingQueueItemSchema], required: true, default: [] })
   trainingQueue!: TrainingQueueItem[];
+
+  // The `dueAt` of the most recently *applied* `starvationTick` (M3a.6,
+  // `docs/M3_DESIGN_DECISIONS.md` §4) — `StarvationTickHandler`'s idempotency guard: a
+  // replay of the same event (identical `event.dueAt`) finds this already stamped
+  // `>= event.dueAt` and no-ops before touching anything else. `null` until this
+  // settlement's first starvation tick ever applies (no migration needed, same convention
+  // as `awayTroops`/`stationedTroops` above).
+  @Prop({ type: Number, default: null })
+  lastStarvationTickAt!: number | null;
+
+  // The currently scheduled `starvationTick` event for this settlement, or `null` when net
+  // Food is >= 0 (nothing pending). Mirrors `BuildQueueItem.eventId`/
+  // `TrainingQueueItem.eventId`'s role: lets `SettlementsService`'s lazy-scheduling choke
+  // point (`settleDoc`, M3a.6 §4) cancel-and-reschedule a moved deadline instead of
+  // enqueuing a duplicate tick on every command that happens to settle a starving
+  // settlement.
+  @Prop({ type: MongooseSchema.Types.ObjectId, default: null })
+  pendingStarvationEventId!: Types.ObjectId | null;
+
+  // The `dueAt` `pendingStarvationEventId` was last scheduled for — carried alongside the id
+  // so `settleDoc` can tell "the deadline moved" from "unchanged, don't reschedule" without a
+  // second read of the `events` collection on every command that touches this settlement.
+  @Prop({ type: Number, default: null })
+  pendingStarvationDueAt!: number | null;
 
   // Optimistic-concurrency guard: incremented by every command that mutates
   // this document (see docs/M1_DESIGN_DECISIONS.md, "Concurrency playbook").

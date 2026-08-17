@@ -2,11 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from './defaultConfig.js';
 
 describe('DEFAULT_CONFIG', () => {
-  it('is at configVersion 6 (M2b.3: the movement.cancelWindowMs block)', () => {
-    expect(DEFAULT_CONFIG.configVersion).toBe(6);
+  it('is at configVersion 7 (M3a.1: the 18-type roster and the combat block)', () => {
+    expect(DEFAULT_CONFIG.configVersion).toBe(7);
   });
 
   it('ships a 90s movement cancel window by default (§6, draft number)', () => {
     expect(DEFAULT_CONFIG.movement.cancelWindowMs).toBe(90_000);
+  });
+
+  // Moved from `scouting.lossExponent` in M3a.1 (M3 §5): the casualty-curve exponent is now
+  // shared between scout-vs-scout and regular battle resolution.
+  it('ships the shared casualty-curve exponent at 1.5 (§5, draft number)', () => {
+    expect(DEFAULT_CONFIG.combat.lossExponent).toBe(1.5);
   });
 });

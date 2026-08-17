@@ -1,16 +1,21 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 
-// The three report kinds M2b.3 produces (`docs/M2_DESIGN_DECISIONS.md` §8) — a scouting
-// mission with intel, a scouting mission with zero survivors (or a missing target — see
-// `MovementArriveHandler`'s own comment), and the defender's counter-report when detected.
-// Deeper report types (combat, trade, ...) are M3.
-export type ReportType = 'scout' | 'scoutFailed' | 'scoutDetected';
-const REPORT_TYPES: ReportType[] = ['scout', 'scoutFailed', 'scoutDetected'];
+// The report kinds shipped so far: the three M2b.3 produces
+// (`docs/M2_DESIGN_DECISIONS.md` §8) — a scouting mission with intel, a scouting mission
+// with zero survivors (or a missing target — see `MovementArriveHandler`'s own comment),
+// and the defender's counter-report when detected — plus `starvation` (M3a.6,
+// `docs/M3_DESIGN_DECISIONS.md` §4/§15): written to a settlement's owner and to each
+// supporter whose stationed contingent lost units on an hourly starvation tick. The
+// remaining M3 report kinds (`raid`/`assault`/`defense`/`supportLoss`/`oasisRaid`/`settle`/
+// `trade`/`buildingDestroyed`, §15) land with their own features.
+export type ReportType = 'scout' | 'scoutFailed' | 'scoutDetected' | 'starvation';
+const REPORT_TYPES: ReportType[] = ['scout', 'scoutFailed', 'scoutDetected', 'starvation'];
 
 export const REPORT_TYPE_SCOUT: ReportType = 'scout';
 export const REPORT_TYPE_SCOUT_FAILED: ReportType = 'scoutFailed';
 export const REPORT_TYPE_SCOUT_DETECTED: ReportType = 'scoutDetected';
+export const REPORT_TYPE_STARVATION: ReportType = 'starvation';
 
 export type ReportDocument = HydratedDocument<Report>;
 

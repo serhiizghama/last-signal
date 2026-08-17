@@ -9,38 +9,39 @@ Source of truth for design: `docs/IMPLEMENTATION_PLAN.md` + the binding mileston
 
 **Format rule (2026-08-16).** Only the current milestone carries detailed per-step
 entries here. When a milestone is reviewed and committed, its per-step log moves
-**verbatim** to `docs/archive/` (currently `archive/PROGRESS_M0_M1.md`) and is replaced
-by the condensed summary below. Detail is never deleted, only relocated.
+**verbatim** to `docs/archive/` (`archive/PROGRESS_M0_M1.md`, `archive/PROGRESS_M2.md`)
+and is replaced by the condensed summary below. Detail is never deleted, only relocated.
 
 ---
 
 ## Current position
 
-**M0 — Scaffold** and **M1 — Economy core** are ✅ **COMPLETE, reviewed and committed**
-(`d794a3e`, `78b0ffd`), including the post-M1 debt sweep. Condensed summaries below;
-full step-by-step logs with verification evidence: `docs/archive/PROGRESS_M0_M1.md`.
+**M0 — Scaffold**, **M1 — Economy core** and **M2 — Map & movement** are ✅ **COMPLETE,
+reviewed and committed** (`d794a3e`, `78b0ffd`, `b947f7f`, `a9f246e`), including the post-M1
+debt sweep. Condensed summaries below; full step-by-step logs with verification evidence:
+`docs/archive/PROGRESS_M0_M1.md` and `docs/archive/PROGRESS_M2.md`.
 
-**M2 design session — ✅ done (2026-08-16):** `docs/M2_DESIGN_DECISIONS.md` exists,
-status RESOLVED (binding for M2, beats the plan on conflict). Plan edits from its §15
-applied (M2.0).
-
-**M2 — Map & movement** is ✅ **COMPLETE and verified** — **M2a** ✅, **M2b** ✅, **M2c** ✅
-(M2c.1–M2c.4), with all three sub-milestone acceptance criteria met end to end against real
-Mongo, the real scheduler and real Chrome. Per-step evidence and the three acceptance tables
-are in the log below. **Awaiting the owner's review and commit — the whole M2 tree is still
-uncommitted.**
-
-Final M2 gate, from a `pnpm clean` tree: **522 tests** (game-core 280, server 130, web 112),
-lint / typecheck / build clean, Prettier clean across every project file,
-`pnpm install --frozen-lockfile` reproducible.
+Verified baseline on the committed M2 tree, re-run from a `pnpm clean` tree at the start of
+M3: **522 tests** (game-core 280, server 130, web 112), lint / typecheck / build clean.
 
 **M3 design session — ✅ done (2026-08-17):** `docs/M3_DESIGN_DECISIONS.md` exists, status
 RESOLVED (binding for M3, beats the plan on conflict).
 
-**Next:** owner reviews and commits M2 → the M2 per-step log below moves verbatim to
-`docs/archive/` per the format rule → owner reviews the M3 record → M3 implementation begins
-by applying the plan edits listed in that record's §21, then **M3a** → **M3b** → **M3c** →
-**M3d** → **M3e**, per the decomposition in the record's §20.
+**Now: M3 — Combat, expansion & trade.** Sub-milestones **M3a** → **M3b** → **M3c** →
+**M3d** → **M3e**, per the decomposition in the record's §20, opened by **M3.0** (the ten
+plan edits listed in that record's §21, applied before the first line of M3 code — the way
+M2.0 applied M2's §15).
+
+**M3.0** ✅ and **M3a** ✅ (M3a.1–M3a.7) are complete and verified; all five M3a acceptance
+criteria were met against the real HTTP API, real Docker Mongo and the real scheduler. **The
+M3a tree is uncommitted and awaiting the owner's review.** Gate: **606 tests** (game-core 327,
+server 166, web 113), lint / typecheck / build clean from a `pnpm clean` tree.
+
+**Two owner decisions are pending** (neither blocks M3b): the §1 faction-identity claims that
+the draft stats do not support (M3a.1's entry), the siege-before-infantry starvation order
+(M3a.3's entry), and — found by M3a's live acceptance run — **troops that starve in transit
+are resurrected when the movement returns** (the M3a summary below, with three options and a
+recommendation).
 
 ### Known debt carried out of M2 (none of it blocking)
 
@@ -164,6 +165,36 @@ typecheck / format / build clean, CI green on GitHub for the full M1 tree.
 3. **Telegram auth is a stub** behind the real `AuthProvider` interface; guest auth
    carries M1–M6, TG smoke-tested on the VPS before M7.
 
+## ✅ M2 — Map & movement: COMPLETE (committed `b947f7f`, `a9f246e`)
+
+Design record: `docs/M2_DESIGN_DECISIONS.md` (RESOLVED, binding for M2). Its §15 plan edits
+were applied in M2.0. Full per-step log with verification evidence:
+`docs/archive/PROGRESS_M2.md`.
+
+| Area | Delivered |
+|---|---|
+| `game-core` (M2a.1–2, M2b.1) | Bounded 61×61 grid + Chebyshev distance, seed-derived `terrainAt` (no tile documents), `travelTimeMs`/`slowestSpeed`, center-out expanding spawn annulus, oasis placement, deterministic `rng` (FNV-1a + mulberry32), the three-scout unit catalogue + training formulas + troop Food upkeep, scout-vs-scout resolution (1.5-power loss curve) and Radio Tower intel tiers |
+| Server (M2a.3–6) | `world` singleton bootstrap on an empty DB, `oases` collection, the new placement policy replacing M1b's outer ring, ~135 real inert NPC accounts seeded in three archetype bands, `GET /api/map` with a public-fields leak guard |
+| Server (M2b.2–4) | `trainScouts` (playbook recipe, chained one-unit-at-a-time `trainingComplete` events), `sendMovement`/`cancelMovement` with the 90 s window, `movementArrive`/`movementReturn` handlers (idempotent by movement status), reports collection + cursor API + unread counts, socket.io `/ws` gateway with a self-healing change-stream publisher |
+| Web (M2c.1–4) | Map tab (viewport-culled DOM grid, 3 zoom steps, pan/pinch, placeholder tiles, hatched out-of-world edge), tile info sheet + send-scout flow with a client-side travel preview, movements overlay with live countdowns and cancel, Reports tab (unread badge, read-on-open, RU prose from structured payloads), live WS updates, scout training on the Barracks card, Influence panel, `useRefetchOnExpiry` shared boundary hook |
+
+**Acceptance criteria — all three verified end to end**: M2a and M2b over the real HTTP API
+against real Mongo with the real scheduler; M2c in real Chrome at a phone-width column
+against a live server seeded with 135 NPCs (register → build → train → scout → report with
+no reload, the client travel preview matching the server's own `arriveAt − departAt`
+exactly). Final gate from a `pnpm clean` tree: **522 tests** (game-core 280, server 130,
+web 112), lint / typecheck / build clean, Prettier clean, `--frozen-lockfile` reproducible.
+
+**Two defects the live runs caught that the suite did not**, both recorded in full in the
+archive: a permanently dead realtime change stream after one transient Mongo blip (now a
+supervised reconnect with backoff), and two time-driven UI surfaces frozen at zero (now the
+shared `useRefetchOnExpiry` hook). Both are the project's own standing lesson — *test
+time-driven behaviour at the boundary, not just the slope* — reproducing.
+
+**Open debt entering M3** is listed under "Known debt carried out of M2" above; item 1 (the
+change-stream outage window) is scheduled for closure in **M3e** by the M3 record §16, and
+item 4 (NPC band membership not stored) is M4's.
+
 ## Owner decisions (closed; reasoning archived)
 
 - **New settlement starts with Command Center L1 only** — the Food gate making the
@@ -171,607 +202,6 @@ typecheck / format / build clean, CI green on GitHub for the full M1 tree.
   `docs/M1_DESIGN_DECISIONS.md` §4 (2026-08-16).
 - **Progression-band compression stays deferred to M4** — tuning without the raid-income
   differentiator would be redone anyway (2026-08-16).
-
----
-
-## Log — M2
-
-<!-- Newest entries at the bottom. Per-step entries for M2 accumulate here. -->
-
-### M2 design session ✅ (2026-08-16)
-
-Two rounds of structured Q&A with the owner per `docs/M2_DESIGN_SESSION_PROMPT.md`,
-producing **`docs/M2_DESIGN_DECISIONS.md` (RESOLVED, binding for M2)**. Headline
-decisions: bounded map + Chebyshev metric; center-out expanding random spawn replacing
-the outer ring; the Signal Source is **not** placed in M2 (dynamic balanced placement at
-the Act 2 reveal, owned by M5); scouts are **trained** (scout-only slice of the training
-system pulled into M2), full scout-vs-scout loss model from day one; map fully public;
-scout is the **only** movement type (settle/trade/support → M3); ~135 real inert NPC
-accounts seed the map; flat placeholder tiles (slicing stays M6); Influence display-only.
-Travel-time contract (§0) pinned for `tools/sim`; M2a/M2b/M2c split with executable
-acceptance criteria in §13; required plan edits listed in §15 (not yet applied).
-
-### M2.0 — plan edits from the M2 record §15 ✅ (2026-08-16)
-
-Applied by the orchestrator (documentation only, no code). `docs/IMPLEMENTATION_PLAN.md`
-now matches the binding M2 record on all six required points: §2.5 spawn rewritten to the
-unified center-out expanding-random policy (NPCs seeded through it first); §2.5 Source
-replaced with "no location until the Act 2 reveal places it at a computed balanced point,
-algorithm owned by M5" (and the intro line no longer says the Source sits at the map
-centre); §2.5 gained "bounded grid, no wrap, Chebyshev metric" and seed-derived cosmetic
-terrain with the toxic-lake exception; §2.6 gained the resolved scouting detail (1.5-power
-loss curve, Radio Tower differential intel tiers, counter-report requires a scout at home,
-failed missions still return an empty report); §5's M2 line dropped "Source placeholder"
-and now reads world gen / map UI / scout-only movements / scout-only training / reports /
-Influence display, with M3 gaining settler convoy + founding gate, Market, support, oasis
-combat, incoming visibility, starvation and beginner protection; §1's Round row pins
-`travel = 2`. Two consistency edits beyond the list: §3.2 collections gained `oases` and
-the `world` singleton's `seed`, and M1's "deferred out of M1" line now routes Influence
-*display* to M2 and founding/Market to M3.
-
-**Baseline before any M2 code** (from a `pnpm clean` tree, this session):
-`pnpm lint && pnpm typecheck && pnpm test && pnpm build` all green — 248 tests
-(game-core 144, server 66, web 38), exit code 0, no warnings in stdout.
-
-### M2a.1 — game-core: map geometry, terrain, travel & spawn formulas ✅ (2026-08-16)
-
-New pure module `packages/game-core/src/map/` (M2 record §1–§3): `geometry.ts`
-(`Tile`, `chebyshevDistance`, `isInGrid`), `rng.ts` (FNV-1a string hash + mulberry32 +
-per-tile `tileRoll` — integer-only, platform-stable, no `Math.random`/clock), `terrain.ts`
-(`TERRAIN_IDS`, `terrainAt(config, seed, x, y)`, `canTerrainHostSettlement`), `travel.ts`
-(`travelTimeMs`, `slowestSpeed`), `spawn.ts` (`spawnRadius`, `spawnAnnulus`,
-`pickSpawnTile` with injected rng + legality predicate, grows outward, returns `null`
-rather than looping), `settleability.ts` (`isSettleable` — grid/lake/oasis/min-distance in
-one place), `oases.ts` (`generateOases` — deterministic, bounded, returns fewer than the
-target rather than hanging). `GameConfig` gained a `map` block (radius 30, terrain weights,
-oases 24/≥5/margin 2, spawn 4 + 1.8·√n / band 6 / max 30, settlement min distance 3);
-`configVersion` 2 → 3; `speed.travel` 2.5 → **2** per §0.
-
-Files: `packages/game-core/src/map/*` (7 sources + 7 specs, new),
-`config/types.ts`, `config/defaultConfig.ts`, `src/index.ts`.
-
-**Verification (run by the orchestrator, not taken from the subagent's report):**
-`pnpm clean` then `pnpm lint` (no issues) → `pnpm typecheck` (clean) → `pnpm format:check`
-(clean) → `pnpm test`: game-core **215 passed** (was 144, +71), server **66 passed**
-(unchanged), web **38 passed** (unchanged); `pnpm build` green. Tests lock the §0 contract
-table (15 rows, ±1 min) and its three bounds, terrain determinism + distribution, spawn
-monotonicity/`R(135)=25`, oasis constraints and both bounded-termination cases.
-Two extra probes run directly against the built package: terrain distribution and oasis
-generation across six different seeds (deviation < 1 pp, 24 oases every time), and a
-150-settlement placement simulation through `pickSpawnTile` + `isSettleable` — all 150
-placed, zero failures, minimum pairwise Chebyshev distance exactly 3, outer radius ~22–26.
-That last probe was the real risk in this step (135 NPCs at min-distance 3 could have been
-geometrically infeasible); it is not.
-
-*Process note:* the subagent finished its edits but its final report never arrived. Per the
-M0 lesson ("a silent subagent is not necessarily a failed one") no replacement was
-dispatched — the work was verified directly instead, and the agent was told to stand down
-before the next step touched the same files.
-
-### M2a.2 — game-core: scout unit catalogue, training formulas, troop Food upkeep ✅ (2026-08-16)
-
-New pure module `packages/game-core/src/units/` (M2 record §7): `catalogue.ts` (`UNITS` —
-the three faction scouts, draft numbers verbatim from §7), `training.ts` (`unitsForFaction`,
-`scoutUnitForFaction`, `calcTrainCost`, `calcTrainTimeMs`, `calcTrainBatchTimeMs`),
-`troops.ts` (`TroopCounts`, `calcTroopFoodUpkeepPerHour`, `slowestTroopSpeed`,
-`calcTroopScoutAttack/Defense`). `GameConfig` gained `units` plus shared `FACTIONS`/`Faction`
-ids (game-core stays display-free — ids only); `configVersion` 3 → 4.
-
-Troop upkeep now enters the economy as an **additive, optional trailing parameter**
-defaulting to "no troops": `calcNetFoodPerHour`, `calcNetRates`, `settleResources`,
-`msUntilFull/Empty/Affordable` and `wouldStarveSettlement` all accept `troops`, and the new
-`wouldStarveWithTroops(config, buildings, troops, addedTroops)` implements §7's training
-gate (absolute, whole batch included). Deliberately optional so no existing call site broke;
-**the server and client must pass the real troop list once `settlements.troops` exists** —
-M2b's acceptance criterion ("training a scout makes Food upkeep visibly drop") is what
-proves that wiring actually happened.
-
-**Verification (run by the orchestrator):** `pnpm clean` then lint (no issues), typecheck
-(clean), `format:check` (clean), `pnpm test`: game-core **254 passed** (was 215, +39),
-server **66** and web **38** unchanged; `pnpm build` green. Probed the built package
-directly: `configVersion` 4, train times 240000 / 260000 / 320000 ms (= 1200/1300/1600 s ÷
-`speed.training` 5), batch cost scaling, net Food dropping by exactly the troop upkeep, and
-the training gate rejecting/accepting correctly.
-
-*Known sharp edge (for M2b):* `slowestTroopSpeed` reads every entry's unit type regardless
-of its `count`, so a `{count: 0}` entry would still influence the result. The command layer
-must reject/strip zero counts (§6 already requires counts ≥ 1) rather than relying on the
-formula to ignore them.
-
-### M2a.3 — server: world bootstrap (seed) + the `oases` collection ✅ (2026-08-16)
-
-New `apps/server/src/world/` module (M2 record §2, §12). `World` gained a `seed` and a
-`key` field with a **unique index** — that index is what makes the singleton a singleton at
-the database level and makes two concurrent bootstraps safe: at most one `create` wins, the
-loser's duplicate-key error is treated as "someone else already bootstrapped" and reads the
-winner back instead of throwing. New `Oasis` schema (`oases` collection, `{x, y, type}`,
-grid-bounded coordinates, unique `{x, y}`, `type` an enum with the single v1 value `farm` so
-M3 can widen it without a migration). `WorldService`: `bootstrap(now)` (idempotent; creates
-the world document **and** its `generateOases(config, seed)` oases in one transaction so the
-two can never disagree), `getWorld()`, `listOases()`, `regenerate(seed?, now)`, plus
-`onModuleInit` so a fresh boot against an empty DB self-heals. Dev-only
-`POST /api/dev/world/regenerate` (optional `{seed}`), 404 in production exactly like
-`DevSeedController`; documented as never touching accounts/settlements. Terrain is still
-never stored — only the seed is.
-
-Files: `apps/server/src/world/{world.service,world.module,world.constants,world-dev.controller,world-regenerate.dto,world.integration.spec}.ts` (new),
-`schemas/oasis.schema.ts` (new), `schemas/world.schema.ts`, `schemas/index.ts`,
-`database/database.module.ts`, `app.module.ts`, `README.md`.
-
-**Verification (run by the orchestrator):** lint / typecheck / format:check clean;
-`pnpm test`: server **71 passed** (was 66, +5), game-core **254** and web **38** unchanged;
-`pnpm clean && pnpm build` green, no warnings in stdout. The new spec covers all five
-required properties, including the concurrent-bootstrap race (`Promise.all`) and the
-production 404. Runtime smoke against the real Docker Mongo is deferred to M2a.6, where
-`GET /api/map` makes the bootstrapped world observable over HTTP.
-
-### M2a.4 — server: center-out spawn policy replaces M1b's outer ring ✅ (2026-08-16)
-
-`PlacementService` was rewritten around `game-core` (M2 record §3): `findTile()` reads the
-world seed, every existing settlement's coordinates and every oasis tile **once per call**,
-then delegates entirely to `pickSpawnTile` + `isSettleable` + `terrainAt`. No placement rule
-is reimplemented server-side. The random source is a DI token (`PLACEMENT_RNG`, bound to
-`Math.random` in production) so tests can force a specific candidate — without that seam the
-duplicate-key retry path could not be exercised deterministically. `createSettlement` keeps
-its shape (bounded loop, one transaction per attempt, unique `{x, y}` index as final
-authority) but draws a fresh candidate per attempt.
-
-Deleted as dead: `placement.geometry.ts` (+ spec), `placement.constants.ts`,
-`schemas/placement-counter.schema.ts` and its registrations — the counter-seeded stride walk
-has no role under a random policy. Grepped: no live references remain (one stale comment
-pointer in `world.schema.ts` fixed by the orchestrator).
-
-**Verification (run by the orchestrator):** lint / typecheck / format:check clean;
-`pnpm test`: server **65 passed** (71 − the 7 deleted outer-ring geometry tests + 1 net new
-— reconciles exactly, nothing silently lost), game-core **254** and web **38** unchanged;
-`pnpm clean && pnpm build` clean, zero warnings. New coverage: a property test creating **30
-settlements through the real API** (all on-grid, none on a toxic-lake or oasis tile, all
-pairwise Chebyshev ≥ 3, each inside the spawn annulus for the count at its creation — the
-M2a acceptance criterion), and a forced-collision test that makes two *concurrent* creates
-draw the identical candidate via the injected RNG, proving the unique-index tie-break and
-the loser's retry onto a distinct tile. That test's determinism holds because `pickSpawnTile`
-is synchronous, so each concurrent call consumes its two rng draws atomically.
-
-### M2a.5 — server: ~135 inert NPC accounts seeded at world start ✅ (2026-08-16)
-
-New `apps/server/src/npc/` module (M2 record §4). `NpcSeederService.seedIfNeeded(now)` seeds
-`WORLD_NPC_COUNT` (default **135**) real `accounts` + `settlements` documents through the
-same center-out placement policy humans use — `pickSpawnTile` / `isSettleable` / `terrainAt`
-from `game-core`, fed an **in-memory tile accumulator** (seeded from whatever settlements
-already exist) so the whole batch is computed before any write and persisted with two bulk
-inserts. No behaviour, no ticks, no `npcState`: M4 switches them on without touching their
-data. `npc-generator.ts` is pure and DB-free (bands, buildings, troops, resources, tile,
-name); `npc-names.ts` generates unique human-plausible survivor names — nothing reads as
-"NPC #37", since NPCs must be indistinguishable in-game.
-
-Bands per §4 (40/40/20): *young* CC 1–2 / resource 1–3 / no troops, *developed* CC 3–5 /
-resource 4–7 / Barracks / 0–3 scouts, *veteran* CC 5–7 / resource 6–9 / Barracks / 2–6
-scouts; factions and sides uniform; resources at 50 % of each settlement's own storage caps;
-scouts are always that faction's own scout unit. Building legality is enforced through
-`missingPrerequisites`, not by hand — which is why the *young* band simply has no Electronics
-Workshop (it needs CC 3).
-
-Schema: `Settlement.troops: [{unitType, count}]` (home troops; stationing is M3 — nothing
-writes it yet, M2b does), and `Account.isNpc` — the marker the seeder needs for idempotency
-and M4 needs for ticking. It is never exposed in any client-facing view.
-
-**Idempotency & race safety:** the world document gained `npcsSeededAt`; seeding is claimed
-by an atomic `findOneAndUpdate({key, npcsSeededAt: null}, {$set: {npcsSeededAt: now}})`
-**inside the same transaction as the bulk inserts** — so a claim can never commit without its
-NPCs (which would otherwise wedge the world as "seeded" with nothing to show). `regenerate`
-deletes the previously-seeded NPC accounts/settlements and resets the marker, leaving human
-accounts untouched.
-
-**Test-environment control:** `WORLD_NPC_COUNT` (via `ConfigService`, documented in
-`.env.example`); all six pre-existing `AppModule` integration specs set it to `0` in their
-`beforeAll` so their exact settlement-count and annulus assertions stay valid.
-
-**Verification (run by the orchestrator):** lint / typecheck / format:check clean;
-`pnpm test`: server **74 passed** (was 65, +9), game-core **254** and web **38** unchanged;
-`pnpm clean && pnpm build` clean, no warnings. Measured full-scale seed: **44 ms** for 135
-NPCs. Independent probe of my own: every band is net-Food-**positive** even in its
-worst-case level combination (young +25.9/h, developed +66.4/h, veteran +130.2/h), so no
-seeded NPC starts in a starving state — worth knowing before M3 turns starvation on.
-
-*Process lesson (new, mine not the subagent's):* I ran the full gate while this subagent was
-still mid-edit and hit a single transient failure in `settlements.integration.spec.ts >
-queue limit` ("expected 403 to be 200"). It did not reproduce in six subsequent full-suite
-runs or three isolated runs of that spec, and no server code path returns 403 (no guard
-returns false, nothing throws `ForbiddenException`) — the plausible cause is my run racing
-the subagent's in-flight edits and its concurrent `tsup` rebuild, which wipes `dist/`
-mid-run. **Do not run the verification gate until the subagent has confirmed it stood
-down** — the standing "never dispatch onto files another agent may hold" lesson applies to
-the orchestrator's own commands too.
-
-### M2a.6 — server: `GET /api/map` ✅ (2026-08-16)
-
-New `apps/server/src/map/` module (M2 record §5): one response carrying the world header
-(`seed`, `roundNumber`, `act`, `serverTime`), every settlement's **public fields only**
-(`id`, `x`, `y`, `name`, `ownerAccountId`, `ownerName`, `ownerFaction`, `ownerSide`) and
-every oasis (`x`, `y`, `type`). No terrain in the payload at all — the client derives it from
-the seed via `terrainAt`. Owner data is resolved as two queries joined in memory (not an
-N+1, not an aggregation) — justified in a comment against the ~150-document scale. Guarded by
-`AuthGuard`, with a comment spelling out that "public" means *public between players*, not
-anonymous. `world.source` is deliberately **omitted** rather than shipped as a permanently
-`null` field, leaving M5 free to design its real shape.
-
-**Verification (run by the orchestrator):** lint / typecheck clean, Prettier clean across
-every in-scope file, `pnpm test`: server **80 passed** (was 74, +6), game-core **254** and
-web **38** unchanged, `pnpm clean && pnpm build` clean. The new spec asserts the leak
-guard on the **serialized JSON**, not just the typed object.
-
-## ✅ M2a — World, spawn & map data: COMPLETE (awaiting owner review/commit)
-
-Acceptance criteria from the M2 record §13, verified end to end against the **real Docker
-Mongo over real HTTP** (a throwaway `last-signal-m2a-smoke` database, dropped afterwards —
-the owner's `last-signal` dev database was never touched):
-
-| Criterion | Result |
-|---|---|
-| Server bootstraps a world on an empty DB | ✅ world created with seed `f6020c5a…`, round 1, act 1 |
-| `GET /api/map` returns ~135 NPC settlements and ~24 oases | ✅ exactly 135 settlements + 24 oases, 26 KB payload |
-| No settlement on a lake or on an oasis | ✅ checked for all 136 settlements against `terrainAt` + the oasis list |
-| All pairwise settlement distances ≥ 3 | ✅ global minimum pairwise Chebyshev distance = 3 |
-| Terrain identical across two derivations from one seed | ✅ unit-tested in `game-core` (plus 6-seed distribution probe) |
-| A newly registered account lands inside the current spawn annulus | ✅ registered through the real API → tile (5, −24), radius 24, annulus [19, 25] at n=135 |
-
-Also smoke-verified: **restarting the server does not re-bootstrap or re-seed** — same seed,
-same 136 settlements, same 24 oases after a full restart against the same database.
-
-Final gate for M2a: **372 tests** (game-core 254, server 80, web 38), lint / typecheck /
-build clean from a `pnpm clean` tree. Prettier is clean for every file in the project's own
-scope; `pnpm format:check` does currently fail on `apps/web/public/_preview.html`, an
-untracked file the owner created outside this work — left untouched deliberately, but it
-will need formatting (or a Prettier ignore entry) before it is committed, or CI will fail.
-
----
-
-## Log — M2b (scouts, movement & reports — server)
-
-### M2b.1 — game-core: scouting resolution (loss curve + intel tiers) ✅ (2026-08-16)
-
-New pure module `packages/game-core/src/scouting/` (M2 record §8): `combat.ts`
-(`resolveScoutCombat` — `atkPts`/`defPts`, `lossFraction = min(1, (defPts/atkPts) ** config
-exponent)`, per-unit-type losses/survivors, defenders never take losses), `intel.ts`
-(`resolveIntelTier` on the Radio Tower differential, `tierIncludesBuildings`,
-`isScoutDetected`), `resolve.ts` (`resolveScouting` — the single arrival entry point
-returning combat + a **typed** `none | base | buildings` intel union + `detected`).
-Display-free: ids and numbers only. Config gained `scouting: { lossExponent: 1.5,
-buildingsTierMinDiff: 1 }`; `configVersion` 4 → 5.
-
-**Orchestrator-required fix, applied before acceptance:** `isScoutDetected` originally
-returned true for any troop entry with `count > 0`. The rule is "≥ 1 **scout** at home" —
-identical today (every catalogued unit is a scout) but a latent, silently-compiling bug the
-moment M3 adds 12 non-scout units to the same list. It now takes `config` and filters on
-`role === 'scout'`, with a fixture-config test proving a non-scout-only defender is not
-detected.
-
-**Verification (run by the orchestrator):** lint / typecheck clean, Prettier clean on every
-in-scope file, `pnpm test`: game-core **278 passed** (was 254, +24), server **80** and web
-**38** unchanged, clean-tree build clean. I re-derived both hand-computed cases
-independently: 5 Falconers (225 atk) vs 2 Falconers (80 def) → 0.355556^1.5 = 0.212012 →
-round(1.06) = 1 lost, 4 survive; 4 Lookouts (140) vs 3 Falconers (120) → 0.857143^1.5 =
-0.793560 → round(3.174) = 3 lost, 1 survives. The half-way rounding case is explicit about
-relying on JS `Math.round` rounding .5 up.
-
-### M2b.2 — server: `trainScouts`, chained completion events, troop upkeep wired ✅ (2026-08-16)
-
-`POST /api/settlements/:id/train` `{unitType, count}` following the concurrency playbook
-verbatim: settle → validate → deduct the whole batch **at enqueue** → version-guarded write
-→ schedule the first `trainingComplete` in the same session. `Settlement.trainingQueue`
-carries `{id, unitType, totalCount, remainingCount, unitTrainTimeMs, startedAt,
-nextCompletesAt, cost, eventId}`. `TrainingCompleteHandler` credits **one** unit at a time
-and chains the next event off `event.dueAt` (never `Date.now()`, so replay after downtime
-resolves in game time).
-
-**Idempotency guard (the interesting part):** unlike builds, the queue item *outlives*
-several events, so "item still exists → apply" would double-credit a replay. The event
-payload carries `remainingCountAtSchedule`, and the handler no-ops unless the persisted
-order still shows exactly that count.
-
-**Troop Food upkeep is now wired end to end** — the M2a.2 hook is closed on both sides:
-server `settleSettlementDoc` (`settleResources`), the build gate (`wouldStarveSettlement`)
-and the state view (`calcNetRates`/`calcNetFoodPerHour`); client `useLiveResources`
-(`settleResources`), `ResourceBar` (`msUntilFull`) and `buildEligibility`
-(`wouldStarveSettlement`, `msUntilAffordable`) via a new `toTroopCounts` selector mirroring
-the server's own. The client half was **not** in the original brief — I required it before
-accepting, because a player with scouts would otherwise have watched the browser tick Food
-faster than the server computes it, which is precisely the drift `game-core` exists to
-prevent.
-
-**Orchestrator decisions recorded** (technical, the design record is silent on them):
-**one active training order per settlement** (second order → `errors.training.queueBusy`;
-M3 may widen it), **no cancel for training** (the record defines cancel for builds only),
-training requires a faction (a never-registered guest is rejected rather than defaulted),
-and a player may train only their own faction's scout. All four are behind named constants
-or explicit checks with comments saying so.
-
-**Verification (run by the orchestrator):** lint / typecheck clean, full suite green —
-server **92** (was 80, +12), web **39** (was 38, +1), game-core **278** unchanged;
-clean-tree build clean, zero warnings. Server coverage includes the M2b acceptance
-criterion ("units credited one at a time, Food upkeep drops"), the Food gate on the whole
-batch, six validation cases, the one-active-order rule, handler replay idempotency, the
-playbook race test, and ownership 404. The web test derives its expectation from
-`settleResources`/`wouldStarveSettlement` and fails without the client fix.
-
-### M2b.3 — server: scout movements (send/cancel/arrive/return) + reports written ✅ (2026-08-16)
-
-New `apps/server/src/movements/` module and two collections (`movements`, `reports`),
-implementing M2 record §6 and §8. `POST /api/movements` (scout only), `POST
-/api/movements/:id/cancel` (90 s window, config), `GET /api/movements/mine`. Travel time is
-`travelTimeMs` over Chebyshev distance at the **slowest** unit's speed; departure is
-immediate; units are deducted from home `troops` under a version guard and the
-`movementArrive` event is scheduled in the same transaction.
-
-`MovementArriveHandler` settles the **defender's** resources inside its own transaction (so
-the intel snapshot is exact), calls `game-core`'s `resolveScouting`, writes the attacker's
-`scout`/`scoutFailed` report and — iff detected — the defender's `scoutDetected`
-counter-report, then either flips to `returning` with survivors + schedules
-`movementReturn`, or ends the movement `done` when nobody survived.
-`MovementReturnHandler` credits survivors home. Both are idempotent on the movement's own
-`status`. `computeReturnAt(departAt, turnAroundAt)` is shared by cancel and arrival so the
-round-trip rule cannot drift. The §6 "target missing at arrival" edge case is handled with
-its own `targetNotFound` report.
-
-**The settle seam** (the one risky refactor here): `settleDoc` is now the single
-ownership-free settle implementation, with two entry points on top — `settleSettlementDoc`
-(unchanged, ownership-checked, used by every player-facing command) and
-`settleSettlementDocUnchecked` (used only by the arrival handler, which has no "calling
-account" to check against). No ownership check was weakened and there is no duplicated
-settle logic.
-
-Config gained `movement.cancelWindowMs` (90 000, draft); `configVersion` 5 → 6.
-
-**Verification (run by the orchestrator):** lint / typecheck clean, Prettier clean,
-`pnpm test`: server **112 passed** (was 92, +20), game-core **280** (was 278, +2), web
-**39** unchanged; clean-tree build clean, zero warnings. Coverage includes the M2b
-acceptance path end to end (send → arrive → return, base-tier intel with **no** building
-list at tower diff 0, defender counter-report, survivors credited home), the buildings tier
-at diff ≥ 1, the undetected case, the total-wipe case, cancel inside/outside the window and
-by the wrong account, replay idempotency for **both** handlers, the playbook race on the
-last scout, nine validation cases and own-movements-only visibility. I re-derived the fixed
-combat case by hand: 2 Falconers (90 atk) vs 2 Lookouts (40 def) → (40/90)^1.5 = 0.29630 →
-round(0.5926) = 1 lost, 1 survives — matches the test.
-
-### M2b.4 — server: reports API + the WebSocket gateway ✅ (2026-08-16)
-
-New `apps/server/src/reports/` (`GET /api/reports` — newest-first, **seek/cursor**
-pagination on a `(createdAt, _id)` pair over the `{accountId, createdAt: -1, _id: -1}`
-index, with the unread count; `GET /api/reports/:id` — ownership-checked 404-not-403,
-**marks read on open**) and `apps/server/src/realtime/` (socket.io gateway on path `/ws`,
-in-process, CORS from the same `parseCorsOrigins` helper as the REST API). Dependencies
-added: `@nestjs/websockets`, `@nestjs/platform-socket.io`, `socket.io` (+ `socket.io-client`
-as a dev dependency for the tests) — all sanctioned by plan §3.4, nothing else.
-
-**WS auth:** socket.io *middleware* (`server.use`), so a rejected socket never connects at
-all rather than connecting and being kicked; the only credential is the same session cookie
-`AuthGuard` resolves, through the same `AuthService`. Each connection joins a per-account
-room, so a push reaches every tab.
-
-**The push-after-commit problem, solved properly.** Reports are written inside the
-scheduler's transaction, so emitting from the arrival handler could tell a client to fetch a
-report that is not yet visible — or that never commits. The chosen solution is a **MongoDB
-change stream** on `reports`: Mongo only delivers change events once the write is committed
-and visible, so "received `reportArrived`" implies "a plain read can already see it" **by
-construction**. It also keeps `movements/**` entirely unaware that socket.io exists.
-*Known operational debt:* a non-resumable change-stream error logs and stops the stream —
-pushes then stop until a restart. Acceptable for M2 (the client refetches anyway); worth a
-supervisor/restart strategy before M7.
-
-**Verification (run by the orchestrator):** lint / typecheck clean, `pnpm test`: server
-**123 passed** (was 112, +11), game-core **280** and web **39** unchanged; clean-tree build
-clean; `pnpm install --frozen-lockfile` reproduces with **zero** warnings (no ignored build
-scripts, no peer-dependency complaints). Coverage includes 3-page cursor pagination with no
-gaps/duplicates, cross-account leak checks, read-on-open idempotency, 401/404 conventions,
-four handshake-auth cases, multi-tab delivery, and the commit-ordering guarantee (on
-`reportArrived`, immediately fetch the report and assert it exists).
-
-## ✅ M2b — Scouts, movement & reports (server): COMPLETE (awaiting owner review/commit)
-
-The M2 record §13 acceptance criterion for M2b, verified **over the real HTTP API against
-real Docker Mongo with the real scheduler running** (throwaway `last-signal-m2b-smoke`
-database, dropped afterwards; the owner's dev database untouched). The integration suite
-deliberately stubs the scheduler out (`SCHEDULER_ENABLED=false`), so this smoke is what
-proves the live event loop:
-
-| Criterion | Result |
-|---|---|
-| Train a scout; the completion event fires | ✅ real scheduler credited the unit 260 s after enqueue (1300 s ÷ `speed.training` 5); the training queue emptied itself |
-| Food upkeep visibly drops | ✅ net Food 426.5036 → 425.5036/h — exactly the falconer's 1/h upkeep |
-| Scout an NPC and lose what the formula says | ✅ 3 Falconers (135 atk) vs 2 Surveyor Drones (70 def) → (70/135)^1.5 = 0.37338 → 1 lost, 2 survived; movement flipped to `returning` with exactly those survivors |
-| The report contains exactly the base-tier intel | ✅ target resources + storage caps + home troop counts, **no** building list (Radio Tower diff 0) |
-| The NPC account has a counter-report | ✅ exactly one `scoutDetected`, naming the attacking settlement and owner; the NPC's own scouts untouched (defenders never die) |
-| Survivors come home | ✅ return event fired on schedule, movement `done`, 2 falconers back in `troops`, net Food back to 426.5036/h |
-| Realtime | ✅ a real socket.io client authenticated by the session cookie received `reportArrived` at the arrival instant, and the pushed report was immediately fetchable |
-
-Replay idempotency (both handlers), the playbook race on the last scout, cancel inside and
-outside the 90 s window, the undetected and total-wipe cases and every validation rejection
-are covered by the integration suite rather than the smoke.
-
-Final gate for M2b: **442 tests** (game-core 280, server 123, web 39), lint / typecheck /
-build clean from a `pnpm clean` tree, `--frozen-lockfile` install clean.
-
-**Deferred out of M2b, deliberately:** no cancel for training orders (the record defines
-cancel for builds only), no incoming-movement visibility (M3 by §8), no beginner protection
-(M3), no oasis scouting (M3).
-
----
-
-## Log — M2c (map & reports UI)
-
-### M2c.1 — web: screen navigation + the Map tab ✅ (2026-08-16)
-
-New `apps/web/src/map/`: `mapGeometry.ts` (pure, unit-tested — `computeVisibleTileRange`,
-`ZOOM_STEPS` 0.5×/1×/2×, `clampCenter`, drag→pan conversion), `MapScreen` with
-`MapGrid`/`MapTile`/`MapMarkers`, `terrainPalette.ts`, `useMapQuery` (TanStack Query against
-`GET /api/map`), `useElementSize`. The bottom nav now actually switches Base ↔ Map (local
-state, **no router dependency added**); Reports stays disabled until its step. Terrain is
-derived client-side via `terrainAt(config, world.seed, x, y)` — the payload carries none.
-Flat palette-coloured placeholder tiles per §11 (real art slicing stays M6), markers tinted
-by faction/side with a distinct own-settlement marker, oasis markers, jump-to-coordinates,
-recentre, and 3 zoom steps with drag + pinch pan clamped at the grid edge.
-
-**Orchestrator-required fix, applied before acceptance:** with a settlement near the east
-edge the out-of-grid region rendered as a flat black rectangle, which reads as "the map
-failed to render" rather than "this is the edge of the world". Since the bounded map is a
-deliberate design decision (§1: the wasteland having an *edge* is thematically right), the
-void now gets a hatched treatment plus a rust boundary line, asserted by its own test.
-
-**Verification (run by the orchestrator):** lint / typecheck clean, `pnpm test`: web **71
-passed** (was 39, +32), game-core **280** and server **123** unchanged; clean-tree build
-clean. Beyond the suite, I drove the **real app in Chrome** at a phone-width column against
-a live server seeded with 135 NPCs: culling holds (**266** tile elements in a 448×480
-viewport — the 61×61 grid's 3 721 tiles are never all mounted), markers carry faction/side
-classes and proper labels ("Ваше поселение", "Поселение «…»", "Оазис"), the controls work,
-and the browser console is clean of errors.
-
-**Owner decision needed (flagged, not invented):** the NPC name generator produces
-Latin-script names ("Wolfe Reyes", "Rust Osei") next to an all-Cyrillic UI. Nothing in the
-design record specifies the language of NPC names. Left as-is pending the owner's call.
-
-### M2c.2 — web: tile info sheet, send-scout flow, movements overlay ✅ (2026-08-16)
-
-`TileInfoSheet` (bottom sheet, `role="dialog"` + `aria-modal`, focus moves to close,
-Escape and backdrop close it) branching on four tile kinds via the pure `classifyTile`:
-empty, oasis (public card, no scout action — §8), another player's settlement (public fields
-+ scout action), own settlement (no scout action). `scoutEligibility.ts` mirrors
-`buildEligibility`'s "disabled control + explicit reason" shape, so "no scouts at home" and
-"this target cannot be scouted" read differently. `ScoutForm` picks a count bounded by
-scouts actually at home and previews travel time from `travelTimeMs(config,
-chebyshevDistance(...), slowestTroopSpeed(...))`. `MovementsOverlay` lists the caller's own
-movements with live countdowns against the server clock, outbound vs returning, and a cancel
-button only inside `config.movement.cancelWindowMs`.
-
-**Verification (run by the orchestrator):** lint / typecheck clean, `pnpm test`: web **83
-passed** (was 71, +12), game-core **280** and server **123** unchanged. In the **real
-browser** against a live server: tapping an NPC settlement opened the sheet (18:22, owner,
-faction, side), the picker showed "Доступно дома: 3" and a preview of **10:36** — which I
-re-derived by hand (Chebyshev 6 from (24,21) to (18,22); falconer speed 17 × `SPEED.travel`
-2 = 34 tiles/h → 6/34 h = 10 min 35.3 s → ceil 10:36); sending created the movement and the
-overlay showed «В ПУТИ · Цель: 18:22 · Прибытие через 10:36 · Сокольничий ×3 · ОТМЕНИТЬ
-ПОХОД»; ~100 s later the countdown read 08:43 and the cancel affordance had correctly
-disappeared with the 90 s window.
-
-*Known debt (recorded, not fixed):* tile selection is pointer-only — there is no keyboard
-path to *open* a tile's sheet (the sheet itself is fully keyboard-operable). Wiring
-"jump to coordinates" to also select that tile would close this cheaply.
-
-### M2c.3 — web: the Reports tab and live WebSocket updates ✅ (2026-08-16)
-
-New `apps/web/src/reports/` (list with unread state and cursor "load more", detail view,
-one body component per report type, `reportPayload.ts` turning the server's structured
-ids/numbers into RU prose through i18n — M1 §15's "the server ships keys/ids, the client
-renders prose") and `apps/web/src/realtime/` (a single shared socket.io client on `/ws`
-invalidating the reports queries on `reportArrived`). The Reports tab activates with an
-unread badge; Vite's dev proxy gained a `/ws` entry with `ws: true`, without which the
-handshake never reaches the API server in development. `socket.io-client` added to
-`apps/web`, matching the server's `socket.io` major.
-
-**Verification (run by the orchestrator):** lint / typecheck clean, `pnpm test`: web **97
-passed** (was 83, +14), game-core **280** and server **123** unchanged;
-`pnpm install --frozen-lockfile` clean. In the **real browser** against the live server, the
-report produced by my earlier scouting run rendered end to end: the nav badge read «Отчёты
-1», the list showed «Разведка · Цель: 18:22 · НОВЫЙ», and the detail read «Отправлено:
-Сокольничий ×3 / Вернулось: ×3 / Потери: ×0», the target's four resources against their
-caps, «Войск не обнаружено», and — the tier message I specifically wanted to see —
-«Радиовышка слишком слаба, чтобы разведать постройки» rather than an empty building list.
-Opening it dropped the badge to «Отчёты», so read-on-open works against the real API.
-
-*Note on a scare that was not a bug:* mid-check the UI sat on «Загрузка…» for a while. It
-was the local Mongo container's connection pool recovering from a `server monitor timeout`
-under load (the scheduler logged the error each tick and kept running — the resilience
-working as designed); once the pool recovered the app loaded normally and every endpoint
-answered in ~50 ms.
-
-### M2c.4 — web: scout training on the Barracks card + the Influence panel ✅ (2026-08-17)
-
-`TrainingSection.tsx` on the Barracks card (count picker, batch cost/time from
-`calcTrainCost`/`calcTrainTimeMs`/`calcTrainBatchTimeMs`, home-troop list, live countdown to
-the next unit, **no cancel** — §7 defines none), `trainEligibility.ts` mirroring
-`buildEligibility`'s disabled-with-a-reason shape for all five gates (no Barracks, no
-faction, order already running, would-starve via `wouldStarveWithTroops`, unaffordable
-against *live* resources), `InfluencePanel.tsx` (§9, display-only — no founding action) and
-a shared `CostList.tsx`.
-
-**Defect found by the orchestrator in the live acceptance run, and fixed:** the training
-countdown **froze at «Следующий через: 00:00»** forever — the unit was credited server-side
-on schedule, but the client never refetched, so the player was left staring at a finished
-order. `BuildQueueList` had solved this long ago (grace period past zero, refetch, bounded
-retry — the scheduler polls once a second, so a completion can land ~1s late); the training
-section had the countdown and none of that. This is the project's own standing lesson —
-*test time-driven UI at the boundary, not just the slope* — reproducing exactly. The fix
-**extracted the pattern into a shared `useRefetchOnExpiry` hook** used by both, rather than a
-second copy that would drift, including the subtle part: a multi-unit training order keeps
-one id across several expiries, so the re-arm key must include the changing timestamp or the
-guard fires only once. Boundary tests were added on both sides.
-
-**Verification (run by the orchestrator):** lint / typecheck clean; web **110 passed** (was
-97). Live in the real browser: «Влияние · 17 из 90 — основание поселения откроется при 90»
-(17 = Command Center 3 ×3 + Greenhouse 8, matching `calcInfluence`), and after the fix a
-second scout trained with **no reload** — the order disappeared on its own and home troops
-went «Сокольничий 1» → «Сокольничий 2».
-
-### M2b.4 reopened — the change stream died permanently, now self-healing ✅ (2026-08-17)
-
-I had accepted "a non-resumable change-stream error logs and stops until restart" as M2 debt.
-**That judgement was wrong and the live run proved it.** During a long session the Docker
-Mongo hit a `PoolClearedOnNetworkError: server monitor timeout` under load;
-`ReportsRealtimePublisher` logged one error at 23:14 and **never emitted another
-`reportArrived` for the rest of the process's life** — an hour later a real scouting arrival
-wrote a real report (server-side `unreadCount: 1`) while the browser's socket sat connected
-and the badge never moved. One transient blip on a dev laptop permanently broke realtime; on
-the 1-core VPS across a 3-week round that is a certainty, not a risk.
-
-The publisher is now a small supervisor: any `error`/unexpected `close` schedules exactly one
-reconnect after exponential backoff (1 s → 30 s cap, mirroring the scheduler's own curve),
-indefinitely — realtime has no "give up and mark failed" state to fall back to — never
-overlapping two streams or two timers, resetting the backoff and **logging the recovery** on
-success, and stopping cleanly on `onModuleDestroy`. It reopens **fresh** rather than resuming
-from a token, deliberately: a resume can be refused once the point ages out of the oplog
-(`ChangeStreamHistoryLost`), which is exactly the long-outage case, so resuming would need a
-fresh-reopen fallback behind it anyway. The stated cost: **a report inserted while the stream
-is down gets no push**, and the client's own refetch is the backstop. Seven tests cover
-recovery, backoff/reset, error+close not double-scheduling, and no leaked timer after
-shutdown. Server **123 → 130**.
-
-### M2c.2 reopened — the movements overlay froze at zero ✅ (2026-08-17)
-
-Same class as the training defect, found in the same live run: the overlay counted down to
-«Прибытие через 00:16» and stayed there while the server had already flipped the movement to
-`returning`. Fixed by reusing `useRefetchOnExpiry` (a movement expires **twice** under one id
-— arrival, then return — so the `watchKey` nuance matters here too), with boundary tests for
-outbound → returning and returning → gone. Web **110 → 112**.
-
-*Not a defect, worth knowing:* while the tab was backgrounded Chrome throttled the countdown
-timer, so the client clock lagged the server by ~14 s and the row briefly showed "arriving in
-00:14" after the server had resolved the arrival. The grace-period-plus-retry refetch
-corrected it on its own — which is precisely why that shape matters.
-
-## ✅ M2c — Map & Reports UI: COMPLETE (awaiting owner review/commit)
-
-The M2 record §13 acceptance criterion for M2c, run end to end in **real Chrome at a
-phone-width column** against a live server with 135 seeded NPCs (throwaway
-`last-signal-m2c-smoke` database):
-
-| Criterion | Result |
-|---|---|
-| register | ✅ fresh guest → name + faction (Nomads) → settlement founded at (21, 3) through the UI |
-| build to Barracks | ✅ queued from the Barracks card, «Осталось: 05:58», completed by the **real scheduler** |
-| train a scout | ✅ trained twice through the UI; the second resolved **with no reload** (troops 1 → 2) |
-| scout an NPC from the map | ✅ jump-to-coords → tile sheet → «Отправить в разведку» with 2 Сокольничих |
-| the travel preview matches the actual arrival | ✅ client preview **05:18**, server's own `arriveAt − departAt` **05:18** — exact |
-| the report appears in Reports **without a reload** | ✅ nav badge «Отчёты 1» → «Отчёты 2» on the WS push, no reload; the overlay flipped to «ВОЗВРАЩАЮТСЯ» on its own |
-| and reads in Russian | ✅ «Отправлено / Вернулось / Потери: Сокольничий ×2 / ×2 / ×0», target resources vs caps, «Войск не обнаружено», «Радиовышка слишком слаба, чтобы разведать постройки» |
-| Influence and threshold progress visible | ✅ «Влияние · 17 из 90 — основание поселения откроется при 90» |
-
-*Honest scope note:* the pre-Barracks economy (Command Center to level 3 + a Greenhouse +
-starting resources) was written directly into the throwaway database rather than played out —
-that grind is M1c functionality already accepted, and playing it would have cost hours of
-real build timers. **Everything from the Barracks build onward was done through the real UI
-against the real scheduler**, with no shortcuts.
-
-Final gate for M2c: **522 tests** (game-core 280, server 130, web 112), lint / typecheck /
-build clean from a `pnpm clean` tree.
 
 ---
 
@@ -819,3 +249,580 @@ push delivery load-bearing.
 **Not done here, on purpose:** the ten plan edits listed in the record's §21 are **not yet
 applied** to `docs/IMPLEMENTATION_PLAN.md` — they are M3.0's job, the way M2.0 applied M2's
 §15. No verification gate was run in this session because nothing executable changed.
+
+---
+
+## Log — M3 (implementation)
+
+<!-- Newest entries at the bottom. Per-step entries for M3 accumulate here. -->
+
+### M3.0 — plan edits from the M3 record §21 + M2 log archived ✅ (2026-08-17)
+
+Documentation only — no code, no dependencies, no schema changes. Two jobs, both due before
+the first line of M3 code.
+
+**All ten §21 edits applied to `docs/IMPLEMENTATION_PLAN.md`:** §1 content scope (+ Settler,
++ two wildlife types, 16 trainable); §2.2 units (the Settler is trained at the Command
+Center and shared by all factions, wildlife are untrainable); §2.3 Market (both halves —
+P2P offers *and* the faceless world exchange with a spread; merchants derived from Market
+level, not trained); §2.4 buildings (Command Center trains Settlers; Barracks and Machine
+Shop levels reduce training time); §2.5 oases (wildlife defenders + a lazily regenerating
+Food pool from M3, still not annexable); §2.5 travel (siege at speed 3–4 sits *deliberately*
+outside the 2–4 h band — an explicit extension of the M2 §0 contract, not a violation);
+§2.6 combat (the whole resolved model: T3.6 points with the infantry/cavalry split, the wall
+as a multiplier, the shared 1.5-power curve, raid vs assault loss formulas, the
+**deterministic** ±5 % roll and why it can never be `Math.random()`, loot behind the Hidden
+Cache, the siege pass with the Command Center floor at 1 and no razing); §2.6 protection
+(72 h from first settlement, blocks *all* foreign movements including scouting, broken only
+by the holder's own first raid/assault — scouting and oasis raids do not break it); §5's M3
+line (rewritten as the M3a–M3e split; the acceptance criterion loses "TG push received" and
+gains "an in-app notification fires and the Telegram provider logs the identical payload");
+§3.2 collections (`tradeOffers`, `notifications`, the three settlement troop lists,
+`account.protectedUntil`, oasis live state).
+
+**M2's per-step log archived** to `docs/archive/PROGRESS_M2.md` — 599 lines moved
+**verbatim** (verified with `diff` against the extracted range, not eyeballed) and replaced
+here by a condensed summary, per the format rule. M2 is committed (`b947f7f`, `a9f246e`),
+which is what makes the move due.
+
+**Verification:** Prettier clean on all three touched files. The M2 baseline was re-run from
+a `pnpm clean` tree before any edits and is green — **522 tests** (game-core 280, server 130,
+web 112), lint / typecheck / build clean — so M3 starts from a known-good line.
+
+**One inconsistency in the record, recorded not silently fixed:** §4 and §13 both describe
+the Settler as "a 2100-resource investment", while §1's stat table gives it
+900 + 700 + 400 + 500 = **2500**. The table is the authoritative draft (every number in it is
+a `GameConfig` draft for `tools/sim` to tune in M4 anyway), so the catalogue will carry 2500;
+the prose figure is stale. Flagged for the owner, no design consequence either way.
+
+### M3a.1 — game-core: the full 18-unit roster, widened `UnitDef`, config v7 ✅ (2026-08-17)
+
+`game-core` knew 3 units (the M2 faction scouts); it now knows all **18** — offence infantry,
+defence infantry, fast and siege for each faction (the 12 M3 adds), the faction-neutral
+**Settler**, and the two **wildlife** oasis defenders. `UnitDef` gained `attack`,
+`defInfantry`, `defCavalry`, `carry`, `splitClass`, `trainedIn?`, and siege-only
+`wallDamage?`/`buildingDamage?`; `UnitRole` widened to seven roles; `faction` became
+`Faction | null`. The three shipped scouts kept every M2 value byte-identical and only gained
+the new fields (`attack: 0`, `defInfantry: 20`, `defCavalry: 10` — record §1's "a scout at
+home now contributes a little real defence"). `config.scouting.lossExponent` was promoted to
+the shared **`config.combat.lossExponent`** (§5, §19.3) and `scouting/combat.ts` reads it;
+`configVersion` 6 → 7. RU names for all 15 new units were added to
+`apps/web/src/i18n/locales/ru/units.json` — required, not optional: the web app's i18next
+setup is key-typed, so widening `UnitType` breaks `apps/web` typecheck without them.
+
+**Two technical micro-decisions** (design record silent; recorded here and in code comments):
+
+- **`trainedIn`, not `faction`, decides trainability.** The record fixes the type as
+  `Faction | null` but also says the Settler is trainable by everyone — which leaves no room
+  for an "any" sentinel. So both the Settler and the wildlife carry `faction: null`, and the
+  Settler carries `trainedIn: 'commandCenter'` while wildlife carry none. The faction-lock
+  rule reads as "a unit with a `faction` must match yours; a trainable unit without one is
+  open to everybody".
+- **`scoutAttack`/`scoutDefense` are 0 on every non-scout**, required rather than optional.
+  A garrison now mixes combat units with scouts, and `calcTroopScoutAttack`/`Defense` sum
+  the whole list — 0 keeps them total *and* keeps M2's shipped scout-vs-scout maths
+  bit-identical. A regression test asserts exactly that: `resolveScoutCombat` against
+  `[falconer 2, brute 50, torcher 30]` equals the result against `[falconer 2]` alone.
+
+**`configVersion` policy for M3** (orchestrator decision, in a comment on the field): all of
+M3 lands under **7**; later M3 steps add blocks (`combat.randomFactor`, `wall`, `hiddenCache`,
+`siege`, `training`, …) without bumping again. The field exists so an *archived season* stays
+interpretable, not to track in-development edits.
+
+**A review correction applied before acceptance.** The first pass mirrored all 18 units'
+stats into a ~250-line `EXPECTED` literal in the spec. That is a change-detector: transcribed
+from the same source in the same sitting it catches nothing at authoring time, while forcing
+a lockstep two-file edit on every M4 tuning pass — the exact drag the standing lesson
+("derive test expectations from `game-core` at assertion time") exists to avoid. It was
+narrowed to the three units a **shipped contract** depends on — **Brute, Torcher, Biker**,
+the units §0's four hand-computed battle rows were derived from — with the reason in the
+comment. Everything else is covered by structural property tests (roster shape, trainability,
+training-building mapping, split class, siege damage, scout fields, carry), which are immune
+to rebalancing by construction.
+
+**Verification (run by the orchestrator, not taken on report):** every one of the 18 stat
+blocks checked against record §1 row by row; full gate from a `pnpm clean` tree — lint /
+typecheck / build clean, **537 tests** (game-core **295**, was 280; server 130 and web 112
+unchanged); Prettier clean on all eight touched files.
+
+**⚠️ Finding for the owner — the §1 "faction identity check" does not hold against the §1
+draft numbers.** The record asserts: *"Raiders are cheapest per attack point and train
+fastest; Engineers cost the most, pay Electronics, and hit hardest per unit; Nomads are the
+fastest and the best per Scrap spent on defence."* Computed from the shipped catalogue:
+
+| Claim | Verdict |
+|---|---|
+| Engineers cost the most | ✅ costliest in all five roles |
+| Engineers pay Electronics | ✅ highest Electronics in all five roles |
+| Engineers hit hardest per unit | ✅ highest attack in offence inf (70), fast (120), siege (75) |
+| Raiders train fastest | ✅ in 4 of 5 roles (defence inf goes to Nomads, 340 s vs 380 s) |
+| **Raiders cheapest per attack point** | ❌ **only for cavalry.** Offence infantry: Skirmisher 2.846 total/atk < Exo 3.357 < Brute 3.375 (same order per Scrap). Siege: Ballista cheapest |
+| **Nomads are the fastest** | ❌ **only scouts and cavalry.** Nomad offence infantry is the *slowest in the game* (Skirmisher 6 vs 7/7); Nomad siege ties last (3 vs Ram Truck's 4) |
+| **Nomads best per Scrap on defence** | ❌ **false on every measure.** vs infantry: Bulwark 1.769 < Torcher 2.000 < Hunter-Sniper 2.125. vs cavalry: Torcher 1.167 < Hunter-Sniper 1.700 < Bulwark 3.286. Torcher strictly dominates Hunter-Sniper on *both* axes — the aggression faction has the most Scrap-efficient defensive infantry, against the Nomads' plan-locked "strong defense" identity |
+
+**Nothing was changed to make a claim true** — the numbers shipped exactly as recorded,
+because §0's battle-contract table was hand-computed from them and M3b must reproduce it
+exactly. The useful part: **all three failures are repairable without invalidating §0**,
+because §0's rows only involve Brute, Torcher and Biker. Raising Skirmisher's and
+Exo-Trooper's cost (claim 1), raising Skirmisher's speed and Ballista Wagon's speed
+(claim 2), and making Hunter-Sniper cheaper or tougher (claim 3) all leave §0 untouched.
+Weakening Torcher would *not* — it is the defender in all four contract rows. Owner's call
+whether to retune now or leave it to M4's `tools/sim` pass, where §22 already puts it.
+
+**Two pre-existing issues found while verifying, neither caused by this step:**
+
+1. **`npx prettier --check .` is not clean on the committed tree** — `apps/web/public/_mockup.html`
+   and `_preview.html` fail, and did so on `HEAD` before any M3 change (verified by checking
+   the committed blobs directly). The M2 log's "Prettier clean across every project file" was
+   inaccurate for these two. They are mockup scratch files; either format them or add them to
+   `.prettierignore`.
+2. **The `startBuild` concurrency race test is load-sensitive.** It failed once during a gate
+   run that overlapped a second full test run on the same machine, and passed on every
+   isolated run before and after. Under CPU starvation the losing request can exhaust
+   `MAX_COMMAND_ATTEMPTS` and return **409 `conflictRetryExhausted`** instead of the 400 the
+   test demands — legitimate behaviour the assertion does not allow for. Worth widening the
+   assertion to "one 200 and one rejection that is either 400-insufficientResources or
+   409-conflictRetryExhausted" when that file is next touched.
+
+### M3a.2 — game-core: training generalized, time scales with the training building ✅ (2026-08-17)
+
+`config.training = { buildingTimeRatio: 0.91 }` (record §2, draft) and
+`calcTrainTimeMs` / `calcTrainBatchTimeMs` gained a **required** `trainingBuildingLevel`:
+`timeFactor = buildingTimeRatio ** (level − 1)`, the same shape as the Command Center's
+build-time divisor. Barracks levels stop being dead weight. Two new accessors —
+`canFactionTrain` and `unitsTrainableAt(config, building, faction)` — encode the §1/§2
+trainability rule in one place: a unit needs a `trainedIn` to be trainable at all (wildlife
+have none), a unit with a `faction` is faction-locked, and a trainable unit with
+`faction: null` is open to everybody (today exactly the Settler, which is why it lives on the
+Command Center). Call sites updated: the server's `trainScouts` passes the Barracks level,
+and the web's `computeTrainEligibility` does too.
+
+**The level parameter is required, not optional-with-a-default** — recorded because it is the
+opposite of what the economy formulas do. An implicit "level 1" default would silently apply
+wherever a caller forgot the real level, and the resulting bug (training that never speeds
+up) is invisible rather than loud; required turns it into a compile error. The economy
+formulas' optional `troops` parameters are a documented sharp edge in this codebase, and this
+function deliberately does not repeat it. Sub-level-1 throws a `RangeError`: a level-0
+building does not exist and cannot train, so a caller passing 0 has a bug.
+
+**A regression caught in review and fixed before acceptance.** The first pass made the
+web's no-Barracks branch return `unitTimeMs: 0, batchTimeMs: 0` (to avoid calling the new
+throwing formulas with level 0). But `TrainingSection` renders on the Barracks card
+**unconditionally** — `BuildingList.tsx:123`, and the base screen lists all 13 building types
+whether built or not — and it renders both times unconditionally too. So every player who had
+not yet built a Barracks would have seen «Время обучения: 00:00», which reads as a bug and
+destroys the preview that tells them what a Barracks buys. Fixed by previewing at
+`Math.max(1, barracksLevel)`: a freshly built Barracks *is* level 1, so it is a real number
+rather than a placeholder, and since `0.91 ** 0 === 1` it reproduces the pre-M3a.2 display
+byte for byte. A new `trainEligibility.test.ts` pins it. The `noFaction` branch keeps its
+zeros — there is no unit to preview at all in that case.
+
+Also corrected a docstring that M3a.1 had silently invalidated: `unitsForFaction` claimed
+"one scout each until M3" and implied it answered "what can this faction train". It returns
+5 units per faction now, and it filters on `faction` alone — so it *excludes* the Settler,
+which every faction can train. It now says what it does and points at
+`unitsTrainableAt`/`canFactionTrain` for the real question.
+
+**Verification (run by the orchestrator).** Full gate from a `pnpm clean` tree: lint /
+typecheck / build clean, **551 tests** (game-core **308**, was 295; web **113**, was 112;
+server 130 unchanged), Prettier clean on all seven touched files. Beyond the suite I
+exercised the built package directly and confirmed: `calcTrainTimeMs(brute, 1)` is exactly
+`ceil(300/5)s = 60 000 ms` — level 1 changes not one shipped number; the level-20 ratio is
+**6.0000** against the record's headline 6.0×; `calcTrainBatchTimeMs` is exactly `count ×`
+the single-unit time; `unitsTrainableAt` returns exactly **3 at the Barracks** (offence
+infantry, defence infantry, scout), **2 at the Machine Shop** (fast, siege) and **1 at the
+Command Center** (the same Settler for all three factions) per faction; no wildlife type is
+trainable at any building by any faction; and level 0 throws `RangeError`.
+
+### M3a.3 — game-core: three-list troop accounting + the starvation math (pure) ✅ (2026-08-17)
+
+`unionTroops(...lists)` (catalogue order, zero entries dropped, never mutates) plus a new
+`units/starvation.ts` carrying `starvationOrder` and `resolveStarvation`. Pure `game-core`
+only — the schema and the handler that use them are the next two steps.
+
+**Why `unionTroops` exists at all**, recorded in its docstring: record §3 requires Food upkeep
+to stay a pure function of **one** settlement document, so the three lists
+(`troops` / `awayTroops` / `stationedTroops`) are unioned locally and handed to the *unchanged*
+`calcNetFoodPerHour` / `calcNetRates` / `settleResources` / `wouldStarve*`, which still take a
+single `TroopCounts`. No cross-document reads; the M1 lazy-resource model survives untouched.
+
+`resolveStarvation` implements §4: guests (`stationed`) die before `awayTroops`, which die
+before home `troops`; within a scope, weakest first by `starvationOrder`; only as many die as
+it takes to bring net Food back to ≥ 0. Two determinism properties are load-bearing and are
+built in deliberately, because the scheduler may hand the same tick to a handler twice and a
+replay that killed a *different* unit than the report already described would be a real bug:
+ties between contingents holding the same unit type break by **ascending `key`, never array
+position** (array order is an accident of how the caller assembled the document), and both
+`killed.stationed` and `remaining.stationed` are returned sorted by `key`. An emptied
+contingent stays in `remaining` as `{key, troops: []}` — dropping it would lose the owner/
+origin tag the caller needs to write that supporter's loss report (§15).
+
+The kill loop batches (`ceil(deficit / upkeepPerUnit)` per target, clamped to what exists)
+over a **fixed, finite target list** visited once each, so it cannot spin even if a config
+retune ever gave some unit `foodUpkeepPerHour: 0`; exhausting the list *is* "a full pass freed
+nothing", and it returns `resolved: false`.
+
+**Verification (run by the orchestrator).** Full gate from a `pnpm clean` tree: lint /
+typecheck / build clean, **570 tests** (game-core **327**, was 308; server 130, web 113
+unchanged); Prettier clean on all five touched files. Beyond the suite I drove the built
+package with a real deficit (net Food −38.4964, two stationed contingents, army at home and
+away) and **hand-derived the expected sequence before looking at the output**: 6 Lookouts from
+contingent `A:acct1` (scouts are weakest, and A sorts before B), then A's 20 Torchers, then 13
+of B's 30 Torchers — 39 upkeep points for a 38.4964 deficit, the minimum. The implementation
+produced exactly that, left `awayTroops` and home `troops` untouched, returned
+`netFoodPerHourAfter` **exactly equal** to a fresh `calcNetFoodPerHour` over `remaining`
+(no floating-point drift from the incremental accounting), and returned a **byte-identical
+result when the `stationed` array was passed reversed** — the replay-determinism property,
+confirmed independently rather than only in the subagent's own test.
+
+**Confirmed from the record's own prediction:** §4 claims "scouts die before combat units by
+the sum rule anyway". They do — all three scouts have combat weight 30, and the lowest
+non-scout is the Brute at 65.
+
+**⚠️ Second finding for the owner — the death order is economically inverted for siege.**
+`starvationOrder` sorts by `attack + defInfantry + defCavalry`, which is exactly what §4
+specifies, and siege units have deliberately poor defensive stats. The consequence:
+
+| Dies at | Unit | Stat sum | Training cost |
+|---|---|---|---|
+| 10th | **Ballista Wagon** (siege) | 125 | **645** |
+| 11th | Bulwark (defence inf) | 130 | 220 |
+| 12th | Exo-Trooper (offence inf) | 135 | 235 |
+| 13th | **Rail Sling** (siege) | 145 | **790** |
+| 14th | Dune Buggy (fast) | 155 | 535 |
+| 16th | Biker (fast) | 215 | 520 |
+
+So the **most expensive unit in the game after the Settler (Rail Sling, 790) starves before
+every cavalry unit and before infantry costing a quarter as much.** The record already
+recognised this failure mode once — it exempts the Settler by name, "a 2100-resource
+investment ... losing them to a Food dip would be brutal" — but did not extend the reasoning
+to siege, which is 620–790 per unit. Implemented exactly as recorded; not changed. If the
+owner wants it fixed it is a one-line change (either exempt `role: 'siege'` alongside
+`'settler'`, or make total training cost the primary sort key and the stat sum the
+tie-break). Otherwise it is M4 `tools/sim` material.
+
+### M3a.4 — server: `awayTroops` / `stationedTroops`, upkeep from all three lists ✅ (2026-08-17)
+
+**The exploit is closed.** `Settlement` gained `awayTroops` and `stationedTroops` (a new
+`StationedContingent` sub-schema tagged with `ownerAccountId` + `fromSettlementId`), both
+`default: []` so no migration is needed anywhere (record §19.10). A single
+`upkeepTroopsOf(doc)` helper returns `unionTroops` of all three lists and now feeds **every**
+upkeep call site: `settleDoc`'s `settleResources`, `startBuild`'s Food gate, `trainScouts`'s
+Food gate, and the wire view's `calcNetRates`/`calcNetFoodPerHour`. One named helper rather
+than four inline unions, precisely because the bug class this step exists to kill is "one call
+site forgot a list".
+
+Two call sites stay **home-only on purpose**, both now carrying a comment saying so: the
+send-time troop-availability check (you can only send what is physically at home) and
+scout-vs-scout `defenderHomeTroops`. The latter also records a **future obligation** — record
+§8 requires stationed scouts to count for the host's scout defence and detection, which M3c
+must wire once `support` can actually populate the list.
+
+The movement lifecycle maintains `awayTroops` inside the same version-guarded transaction as
+everything else: send moves `troops → awayTroops`; arrival subtracts combat losses (or the
+whole army on a total wipe, where nobody is coming home); return subtracts the survivors it
+credits back into `troops`. Cancel and the `targetNotFound` turn-around change nothing — the
+units are still genuinely in transit — and both carry a comment so the omission reads as
+deliberate. I traced all six paths: they balance exactly (`losses + survivors = units`).
+
+**A correctness call reversed in review.** The first pass had the subtraction helper **throw**
+when `awayTroops` lacked enough of a unit type, reasoned as "the loud mechanism this codebase
+has, since there is no logger". Both halves were wrong. There *is* a logger — `@nestjs/common`
+`Logger` is used in five places including `SchedulerService` and `ReportsRealtimePublisher`,
+and its output is visible in every server test run. And throwing trades away the wrong thing:
+in `MovementReturnHandler` a throw fails the handler → the scheduler retries 3× → the event
+dead-letters → **`movement.survivors` are never credited home and the player's returning army
+is permanently destroyed**, in order to protect a Food number that was merely *wrong* for all
+of M2. Worse, it was **guaranteed to fire on the first deploy against any world with a
+movement already in flight**: those movements were debited from `troops` under the old code
+and never recorded in `awayTroops`, so `awayTroops` is `[]` when they land. Now the helper
+**clamps at zero and returns a `shortfall`**, and each of the three call sites logs it as an
+error through its own `Logger` with the settlement id, movement id and shortfall. Drift is
+loud and diagnosable from the pm2 log; it no longer eats armies. An `upgrade-boundary safety`
+integration test pins it: a `returning` movement against an empty `awayTroops` credits its
+survivors home, leaves `awayTroops` at `[]` rather than negative, and does not throw.
+
+**A client-side drift the subagent found unprompted and fixed:** `useLiveResources` runs
+`settleResources` locally against the server clock to drive the live resource bar, and was
+feeding it home troops only. The moment the server started charging for `awayTroops`, the
+client's Food number would have diverged from the server's the instant any army left home —
+visible as drifting numbers, the exact failure the "both sides import the same formula" rule
+exists to prevent. It now uses a client mirror of `upkeepTroopsOf`. `ScoutForm` correctly
+still uses home-only ("what can I send right now").
+
+**Verification (run by the orchestrator).** Full gate from a `pnpm clean` tree: lint /
+typecheck / build clean, **578 tests** (server **138**, was 130; game-core 327 and web 113
+unchanged), Prettier clean on every touched file. The record §20 acceptance criterion —
+*"sending an army away leaves upkeep unchanged (gap #1 closed, asserted numerically)"* — is
+met by an integration test over the **real HTTP API against real Mongo** that reads
+`netFoodPerHour` before and after a send and asserts `toBe`, bit-identical, not
+`toBeCloseTo`; it also asserts the counts moved `troops → awayTroops`. I checked that the test
+genuinely discriminates: under the pre-M3a.4 behaviour `netFoodPerHour` would rise to the
+buildings-only value after a send, so the assertion fails without the fix. Four more tests
+cover the round trip, losses leaving `awayTroops` with the upkeep delta derived from
+`game-core`, the total wipe, and the upgrade boundary; both existing replay tests were
+extended to assert `awayTroops` idempotency too, not just movement status.
+
+### M3a.5 — server: `trainUnits` generalized to three training buildings ✅ (2026-08-17)
+
+`trainScouts` → `trainUnits`. The playbook recipe is untouched (settle → validate → deduct
+the whole batch at enqueue → version-guarded write → chained `trainingComplete` events
+crediting one unit at a time); only what it accepts widened. Three substantive changes:
+
+- **One `canFactionTrain` call replaces the "is this the faction's own scout" check.** It
+  covers both gates at once — a unit with no `trainedIn` (the two wildlife types) is rejected
+  regardless of faction, and everything else must either belong to the caller's faction or be
+  faction-neutral. That last clause is the whole reason the Settler works from all three
+  factions without a special case.
+- **The training building is resolved from `config.units[unitType].trainedIn`**, and the
+  level-≥1 structural check is now against *that* building. `errors.training.noBarracks`
+  became `errors.training.buildingMissing` with a `{ building }` param — the old key was
+  simply wrong for two of the three buildings.
+- **One active order per building, not per settlement.** `MAX_ACTIVE_TRAINING_ORDERS` became
+  `MAX_ACTIVE_ORDERS_PER_BUILDING`, and an existing order's building is derived from its own
+  `unitType` rather than stored on the queue item — **no schema change**, exactly as §2
+  anticipated ("the `trainingQueue` array already tolerates more than one entry").
+
+The Food gate now measures against `upkeepTroopsOf` (the M3a.4 union), so an army already in
+transit counts against your next training order — which, with cavalry at upkeep 3 and siege at
+3–4, is precisely the intended constraint on army size. `TrainingCompleteHandler` needed **no**
+change: it reads `item.unitType`/`item.unitTrainTimeMs` generically and was already
+roster-agnostic (verified by inspection, not "improved"). The route path is unchanged
+(`POST /settlements/:id/train`), so no client contract broke.
+
+**Client kept honest but deliberately not rebuilt:** `TrainBlockReason.noBarracks` became
+`buildingMissing { building }`, and the client's queue-busy mirror now scopes to the *same*
+building — without that it would have greyed out the button while a legitimately parallel
+order ran elsewhere. The Barracks card still trains only the faction scout; that is the
+**M3e boundary**, stated in a comment so it reads as deliberate.
+
+**Verification (run by the orchestrator).** Full gate from a `pnpm clean` tree: lint /
+typecheck / build clean, **583 tests** (server **143**, was 138; game-core 327 and web 113
+unchanged), Prettier clean on every touched file. The §20 acceptance criterion — *"a Barracks
+order and a Machine Shop order run simultaneously"* — is covered over the real HTTP API: both
+orders return 200, `trainingQueue` holds two entries whose derived buildings are exactly
+`['barracks', 'machineShop']`, and a *second* order at either building is still rejected with
+`queueBusy` carrying the right `building` param, so the parallelism is per-building rather
+than unlimited. Two other tests are worth calling out as genuinely discriminating: the
+Settler case loops over **all three factions** and asserts each can train one at the Command
+Center; and the Food-gate test asserts the union property **against the formula directly**
+(`wouldStarveWithTroops` is safe with no troops and unsafe with `awayCount` away) *before*
+asserting the HTTP rejection — so it proves the settlement starves specifically *because* of
+`awayTroops`, not incidentally.
+
+**Recorded judgement (not a defect):** the RU text for `buildingMissing`/`queueBusy` stays
+generic rather than interpolating the `{ building }` param, matching how every other
+multi-param server error in this codebase words its Russian. The param is on the wire, so
+M3e's Units tab can render a translated building name when it has a place to put one.
+
+**Small debt introduced, recorded:** the new `wideRosterBuildings()` test fixture pins the
+Greenhouse Farm at `maxLevel` for a generous Food margin instead of deriving the minimal safe
+level the way the rest of that file does — the Machine Shop has a nonzero `foodUpkeepWeight`
+(0.3) that the existing `foodSafeBuildings()` margin does not account for. Correct, just less
+tight than the file's own convention.
+
+### M3a.6 — server: the `starvationTick` handler and its lazy scheduling ✅ (2026-08-17)
+
+Troops now starve. `StarvationTickHandler` settles the settlement **to `event.dueAt`** (never
+the wall clock — the shipped replay rule), re-checks the trigger (net Food < 0 **and** stored
+Food ≤ 1e-6), calls `game-core`'s `resolveStarvation`, persists `remaining` to all three
+lists in one version-guarded write, writes the reports, and reschedules at exactly
+`event.dueAt + 1 h` while the balance is still negative. `ReportType` widened with
+`'starvation'`. New settlement fields `lastStarvationTickAt`, `pendingStarvationEventId`,
+`pendingStarvationDueAt`, all `default: null` — no migration.
+
+**Lazy scheduling, not a background sweep** (§4, and the plan's "nothing ticks in the
+background"): `ensureStarvationSchedule` reconciles *one* pending tick per settlement —
+schedule when it starts starving, cancel when it recovers, cancel-and-reschedule when the
+deadline genuinely moves (guarded by a 1 s epsilon so `Math.ceil` noise between back-to-back
+commands doesn't churn the event). ~150 settlements generate no background load.
+
+**A subtle bug the subagent found and fixed while testing, worth keeping in the log.** The
+first draft ran the ensure-check inside `settleDoc`, i.e. as a side effect of *every* settle
+— which the brief had suggested as the natural choke point. That made `StarvationTickHandler`
+trip it during its own self-settle: the handler anchors on `event.dueAt`, which after a
+scheduler backoff no longer equals the stored `pendingStarvationDueAt` (`recordFailure`
+reassigns `event.dueAt` independently of anything on the settlement), so the "deadline moved"
+branch fired and **cancelled the very event the handler was mid-way through applying**,
+leaving stray duplicates. Four tests failed on it. The fix scopes the generic ensure-check to
+the ownership-checked `settleSettlementDoc` only, and has the starvation handler manage its
+own follow-up explicitly using the same shared `computeStarvationDeadline` formula — so the
+two paths can never disagree about *where* the deadline is, while never fighting over *whose
+event* is in flight.
+
+**A gap I found in review and sent back.** That fix was correct but dropped the other half of
+§4's rule — *"when a command **or handler** settles a settlement and sees net Food < 0"*. With
+the check scoped to account commands only, **no handler armed a tick**, and a settlement can
+enter the starving state from a handler path via ordinary play: the build gate evaluates
+against the troops as they are *now*, and the training gate against the buildings as they are
+*now*, so a queued upgrade (+3 upkeep, allowed) plus a training batch (+3 upkeep, allowed)
+can cross zero only when `BuildCompleteHandler` applies the level. Food would then drain to 0
+and **no troop would die until the owner next issued a command** — an unbounded grace period
+for offline players, which is exactly what §4 rejected, and worst precisely when starvation is
+supposed to bite. Closed by making `ensureStarvationSchedule` public and calling it from
+`BuildCompleteHandler` and `TrainingCompleteHandler` after they apply their effects. The
+self-cancellation hazard cannot apply to those two, and the comment says why: the scheduler
+claims and dispatches **one event at a time**, so a `buildComplete` can never be in flight
+alongside that settlement's own `starvationTick`. A test reproduces the exact cross-zero
+sequence and asserts the tick is armed by the build handler.
+
+**Idempotency — the hard part of this step.** Unlike a build (queue item gone) or a training
+order (`remainingCountAtSchedule` vs the document), a starvation tick has **no natural
+"already applied" marker**, and killing troops twice is silently plausible and destroys player
+property. The guard is `lastStarvationTickAt >= event.dueAt`, checked immediately after
+loading the document and **before the settle call**, so a replay is a true no-op with zero
+writes. Both exit paths stamp it, so a run that killed nothing still closes the door. I
+walked the state machine myself: a replay of the same tick returns early; a stale *older*
+event returns early (so out-of-order replay after downtime cannot double-kill); the legitimate
+follow-up at `dueAt + 1 h` proceeds; and a scheduler retry after a throw proceeds correctly,
+because handler effects and the `done` mark commit in one transaction, so a failed attempt
+applied nothing.
+
+**Verification (run by the orchestrator).** Full gate from a `pnpm clean` tree: lint /
+typecheck / build clean, **595 tests** (server **155**, was 143; game-core 327 and web 113
+unchanged), Prettier clean on every touched file. Nine integration tests over the real HTTP
+API cover the §20 criterion end to end — scheduling at `now + msUntilEmpty` derived from
+`game-core`, exactly one pending tick under repeated commands with the deadline updating
+rather than duplicating, the kill hitting the weakest first and only as deep as needed,
+**guests consumed before `awayTroops` and before home troops**, the owner's report plus a
+supporter's own contingent-scoped report, rescheduling at exactly `dueAt + 1 h`, no follow-up
+after recovery, buildings untouched, and the replay killing nothing the second time.
+
+**A Mongoose trap found here that would have bitten M3c:** `reportModel.create(docs, { session })`
+throws unless `ordered: true` is set whenever more than one document is created in one call.
+Every previous handler wrote exactly one report, so it had never surfaced. M3c writes an
+attacker report, a defender report and a per-supporter loss report from one battle — it would
+have hit this immediately.
+
+### M3a.7 — server: NPC seeder bands gain defenders and a Hidden Cache ✅ (2026-08-17)
+
+Record §19 integration point 2: M2a.5 seeded NPC bands with 0–6 *scouts* and nothing else,
+because nothing could attack them. Raiding lands in M3c, so **135 undefended farms would have
+handed every player the §0 raid-income bound on day one**. `NpcBandDef` gained `defenders` and
+`hiddenCache` ranges — young: neither; developed: **10–20** defence infantry + Cache **2–3**;
+veteran: **30–60** + Cache **4–6**. Placement still goes through `missingPrerequisites` for
+legality, and the defender unit is resolved from the catalogue **by `role`, per faction**
+(Torcher / Bulwark / Hunter-Sniper), never by a hardcoded name.
+
+**The draw order (scouts, then defenders) is part of the world's determinism contract** and is
+commented as such — the RNG is a stream, so reordering it would change every NPC in a world
+regenerated from the same seed.
+
+**The Food question, answered numerically rather than assumed.** Defenders eat Food, and M3a.6
+now kills troops on a negative balance — so a seeder that over-stacked a settlement would
+produce NPCs that quietly starve their own army to death, surfacing much later as "why do the
+NPCs have no troops by day 3". I recomputed the worst case independently of the subagent, at
+the true combinatorial extreme (max Command Center level for peak upkeep, **minimum**
+Greenhouse Farm roll for minimum output — each resource building is drawn independently, so
+they can land at opposite ends — max other resource buildings, max cache, max defenders *and*
+max scouts together): **developed +46.43 Food/h, veteran +70.19 Food/h**, identical across all
+three factions (every defence-infantry unit has `foodUpkeepPerHour: 1`). No clamp needed, and
+the margin is comfortable. Both a pure property test (100 seeds × 3 bands × 3 factions) and an
+integration test over the real 135-NPC batch assert net-Food-non-negative at genesis.
+
+**The counts are justified against §0, not guessed.** Sanity-checked with the record's own
+reference raider (100 Brutes, `atkPts` 4000) against the *toughest* faction's defender
+(Bulwark, `defInfantry` 65), using the raid loss formula `x/(1+x)`: 10 defenders → attacker
+loses ~6 (a cheap starter target); 20 → ~16 with the defender losing ~85 % (raidable but with
+real cost); 30 → ~25; 60 → `defPts` 3900 vs `atkPts` 4000 puts `x` at 0.963, so a bare
+100-Brute raid loses ~49 of its 100 and is no longer viable — a veteran needs a genuinely
+committed army, which is §19's stated intent. NPCs never build a Warehouse or Cold Storage, so
+caps stay flat at 4000 and a 50 %-filled NPC holds ~2000 per resource: Cache 3 protects ~365
+(~18 %), Cache 6 protects ~897 (~45 %).
+
+**Verification (run by the orchestrator).** Full gate from a `pnpm clean` tree: lint /
+typecheck / build clean, **606 tests** (server **166**, was 155; game-core 327 and web 113
+unchanged), Prettier clean on every touched file. I reproduced the genesis-Food arithmetic
+myself against the built package and got the same figures.
+
+**One test failed once and did not reproduce — diagnosed, not waved away.**
+`settlement-creation.integration.spec.ts`'s ~30-settlement placement property test failed on
+one full-gate run and then passed on four consecutive re-runs (twice server-only, twice the
+whole monorepo). It is **structurally impossible for M3a.7 to have caused it**: that spec sets
+`WORLD_NPC_COUNT = '0'` in its own `beforeAll`, so it seeds no NPCs at all, and this step
+changed nothing outside NPC generation. Its annulus assertions are also robust to the only
+thing that could have shifted (RNG-stream ordering), since a larger effective `n` only pushes
+the annulus outward and the assertion is a lower bound. That leaves the same cause as the
+known-flaky `startBuild` race spec — 30 sequential HTTP settlement creations, each a real
+transaction, timing out under CPU starvation. **Recorded as a second load-sensitive spec**
+alongside the race test; both deserve a tolerance pass when that area is next touched.
+
+## ✅ M3a — Roster, training & the truth about upkeep: COMPLETE (awaiting owner review/commit)
+
+The record §20 acceptance criteria for M3a, run end to end over the **real HTTP API against
+the real Docker Mongo with the real scheduler running** (throwaway `last-signal-m3a-smoke`
+and `last-signal-m3a-npc` databases, both dropped afterwards):
+
+| Criterion | Result |
+|---|---|
+| a Barracks order and a Machine Shop order run **simultaneously** | ✅ 4 Brutes and 2 Bikers both accepted, `trainingQueue` held both; a *second* Barracks order was rejected with `errors.training.queueBusy` / `params.building = "barracks"` |
+| Food upkeep rises by exactly the catalogue values | ✅ two Brutes credited by the real scheduler moved `netFoodPerHour` 3012.15198056 → 3010.15198056 — a delta of **exactly 2.000000** |
+| sending an army away leaves upkeep unchanged (**gap #1 closed**) | ✅ **3006.15198056 before and after**, bit-identical, with the counts moving `troops → awayTroops` |
+| forcing net Food negative fires the tick, kills the weakest first, writes the report, stops on recovery | ✅ see below |
+| a freshly regenerated world's NPCs have defenders | ✅ 135 seeded; **85 (63 %)** carry defence infantry *and* a Hidden Cache — matching the 60 % developed+veteran band weight; defender counts 10–59 and cache levels 2–6, both inside their configured ranges; a Raiders NPC held Torchers, its own faction's unit |
+
+**The starvation run, in detail.** With net Food at **−8.848** and stored Food at 0, the real
+scheduler fired the tick on its own. It killed the **3 Lookouts that were away first** — they
+are both the weakest units (combat sum 30 vs the Brute's 65) *and* in the scope that starves
+before home troops — then exactly **6 Brutes**, for 9 upkeep points against an 8.848 deficit:
+the minimum. Net Food landed at **+0.152** and the report carried the structured payload
+(`killedTroops`, `killedAwayTroops`, `killedStationed`). I had hand-derived that exact
+sequence before running it.
+
+Then something better happened: the Barracks credited another Brute a moment later, pushing
+net Food to −0.848, and **a second tick fired ~2.4 s later and killed exactly one Brute**,
+restoring +0.152. That is the M3a.6 gap I sent back — *"no handler ever arms a tick"* —
+working live: `TrainingCompleteHandler` armed it itself. Without that fix the settlement would
+have sat net-negative with no tick until the player next opened the app.
+
+The genesis-Food property also holds against the **real** seeded world, not just the fixtures:
+across all 135 NPCs the minimum net Food is **+26.50/h** and **zero** starvation ticks are
+armed.
+
+Final M3a gate from a `pnpm clean` tree: **606 tests** (game-core 327, server 166, web 113),
+lint / typecheck / build clean.
+
+### ⚠️ Defect found by the live acceptance run — needs an owner decision (blocks nothing yet)
+
+**Troops that starve to death while in transit come back to life when the movement returns.**
+
+Reproduced live: the 3 Lookouts starved out of `awayTroops` were still listed on the movement
+document, so `MovementArriveHandler` resolved scouting with all 3, wrote `survivors: 3`, and
+`MovementReturnHandler` credited 3 Lookouts back into home `troops`. The settlement ended with
+Lookouts it had already lost.
+
+**Why this matters:** it makes starvation escapable — send your army out, and any starvation
+deaths among it are undone on return. That is a variant of the exact exploit M3a.4 closed
+("marching an army out protects it"), reintroduced through a different door.
+
+**Why the design record does not settle it:** §3 defines `awayTroops` as a *denormalized
+counter* of in-transit units, and §4 says losses "are removed from whichever list holds them"
+— but nothing says the **movement document** must be updated to match, and §18 designs
+cross-document writes only for *arrivals*, not for starvation. So the invariant "`awayTroops`
+equals the sum of in-flight movements' units" is broken by design, not by a coding mistake.
+
+**The diagnostic worked exactly as intended.** The clamp-and-log I required in M3a.4 (instead
+of the original throw) is what surfaced this — the server logged:
+`MovementReturnHandler: awayTroops drifted below zero crediting movement … — clamped at zero, shortfall: [{"unitType":"lookout","missing":3}]`
+and credited the survivors home rather than dead-lettering the event. Had it thrown, this
+would have shown up as a mysteriously vanished army instead of a precise log line.
+
+**Three options, for the owner to choose (this is a design decision, not a technical one):**
+
+1. **Starvation also debits the movements** — walk the settlement's outbound movements and
+   reduce their `units`/`survivors` to match. Correct and faithful to §4's kill order, but it
+   needs a cross-document write and a policy for *which* movement loses units when several are
+   in flight (deterministically — e.g. ascending movement `_id`, mirroring §18's lock order).
+2. **Exempt `awayTroops` from starvation** — in-transit troops still *pay* upkeep (so the M3a.4
+   fix stands untouched) but cannot die; only stationed contingents and home troops starve.
+   Simplest, no cross-document write, and arguably fair ("they're carrying their own rations").
+   Deviates from §4's stated three-scope kill order.
+3. **Starve them but have the return credit `min(survivors, awayTroops)`** — rejected in my
+   view: `awayTroops` is an aggregate across all movements, so it cannot say *which* movement
+   lost units, and the result would be order-dependent and non-deterministic on replay.
+
+My recommendation is **option 1** if the owner wants §4 honoured literally, **option 2** if
+they want the simplest thing that cannot break replay determinism. Either is a small change;
+option 1 belongs in M3c (where two-document arrival transactions already exist), option 2 is a
+few lines in `resolveStarvation`'s caller. **Nothing downstream is blocked by it** — the
+exploit requires deliberately starving an army that is already marching.

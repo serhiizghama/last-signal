@@ -8,6 +8,7 @@ import { PlacementModule } from '../placement/placement.module';
 import { EventHandlerRegistry } from '../scheduler/event-handler.registry';
 import { SchedulerModule } from '../scheduler/scheduler.module';
 import { BuildCompleteHandler } from './handlers/build-complete.handler';
+import { StarvationTickHandler } from './handlers/starvation-tick.handler';
 import { TrainingCompleteHandler } from './handlers/training-complete.handler';
 import { ACTIVE_BUILD_SLOTS, DEFAULT_ACTIVE_BUILD_SLOTS } from './settlements.constants';
 import { SettlementsController } from './settlements.controller';
@@ -25,6 +26,7 @@ import { SettlementsService } from './settlements.service';
     SettlementsService,
     BuildCompleteHandler,
     TrainingCompleteHandler,
+    StarvationTickHandler,
     // Deliberately a provider, not a hardcoded literal — see the comment on the token
     // itself. Swapping this for a per-settlement/faction-aware value later (Engineers'
     // second parallel build slot) is a provider change, not a rewrite.
@@ -41,13 +43,15 @@ export class SettlementsModule implements OnModuleInit {
     @Inject(BuildCompleteHandler) private readonly buildCompleteHandler: BuildCompleteHandler,
     @Inject(TrainingCompleteHandler)
     private readonly trainingCompleteHandler: TrainingCompleteHandler,
+    @Inject(StarvationTickHandler) private readonly starvationTickHandler: StarvationTickHandler,
   ) {}
 
-  // Registers the `buildComplete` and `trainingComplete` handlers with the shared scheduler
-  // registry — the pattern the registry's own doc comment describes: feature modules plug
-  // in from their own `onModuleInit`.
+  // Registers the `buildComplete`, `trainingComplete` and `starvationTick` handlers with the
+  // shared scheduler registry — the pattern the registry's own doc comment describes: feature
+  // modules plug in from their own `onModuleInit`.
   onModuleInit(): void {
     this.registry.register(this.buildCompleteHandler);
     this.registry.register(this.trainingCompleteHandler);
+    this.registry.register(this.starvationTickHandler);
   }
 }

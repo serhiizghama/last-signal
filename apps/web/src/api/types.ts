@@ -51,6 +51,13 @@ export interface SettlementTroopView {
   count: number;
 }
 
+/** Mirrors `SettlementStationedContingentView` in `apps/server/src/settlements/settlements.view.ts`. */
+export interface SettlementStationedContingentView {
+  ownerAccountId: string;
+  fromSettlementId: string;
+  troops: SettlementTroopView[];
+}
+
 /** Mirrors `SettlementTrainingQueueItemView` in `apps/server/src/settlements/settlements.view.ts`. */
 export interface SettlementTrainingQueueItemView {
   id: string;
@@ -79,7 +86,12 @@ export interface SettlementStateView {
   netFoodPerHour: number;
   storageCaps: Resources;
   buildQueue: SettlementBuildQueueItemView[];
+  /** Home troops only — what's physically at this settlement right now. */
   troops: SettlementTroopView[];
+  /** Own units currently in transit (any movement, any leg) — still eats this settlement's Food. */
+  awayTroops: SettlementTroopView[];
+  /** Foreign contingents stationed here as support — this settlement (the host) pays their Food too. */
+  stationedTroops: SettlementStationedContingentView[];
   trainingQueue: SettlementTrainingQueueItemView[];
   influence: number;
   serverTime: number;

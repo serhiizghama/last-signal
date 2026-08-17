@@ -1,5 +1,20 @@
-import type { BuildingLevels, BuildingType, TroopCounts, UnitType } from '@last-signal/game-core';
-import { BUILDING_TYPES, SETTLEMENT_SLOTS, UNIT_TYPES } from '@last-signal/game-core';
+import type {
+  BuildingLevels,
+  BuildingType,
+  GameConfig,
+  Resources,
+  TroopCounts,
+  UnitType,
+} from '@last-signal/game-core';
+import {
+  BUILDING_TYPES,
+  SETTLEMENT_SLOTS,
+  UNIT_TYPES,
+  calcNetFoodPerHour,
+  msUntilEmpty,
+  unionTroops,
+} from '@last-signal/game-core';
+import type { Types } from 'mongoose';
 
 import type { BuildingSlot } from '../schemas/settlement.schema';
 
@@ -11,7 +26,7 @@ export function isBuildingType(value: string): value is BuildingType {
 }
 
 // Same narrowing as `isBuildingType`, for `Settlement.troops[].unitType` /
-// `trainScouts`'s request body — the schema comment on `SettlementTroopEntry` points here.
+// `trainUnits`'s request body — the schema comment on `SettlementTroopEntry` points here.
 export function isUnitType(value: string): value is UnitType {
   return (UNIT_TYPES as readonly string[]).includes(value);
 }
@@ -36,6 +51,64 @@ export function toTroopCounts(
   troops: ReadonlyArray<{ unitType: string; count: number }>,
 ): TroopCounts {
   return troops.map((t) => ({ unitType: t.unitType as UnitType, count: t.count }));
+}
+
+// The union of a settlement's three troop lists — `troops` (home), `awayTroops` (in
+// transit), `stationedTroops` (hosted for an ally) — which is what Food upkeep is actually
+// charged on (M3a.4, `docs/M3_DESIGN_DECISIONS.md` §3). This is the single named helper for
+// that union rather than an inline `unionTroops(...)` at each call site on purpose: there
+// are four upkeep call sites (`settleDoc`, `startBuild`'s starvation gate, `trainUnits`'s
+// starvation gate, `buildSettlementStateView`'s rate/food display) and they must never
+// disagree — the whole bug class this step exists to fix was exactly "one call site forgot a
+// list" (before this step, upkeep read `troops` alone, so marching an army away silently
+// dropped its Food cost to zero, §19.1). A future fourth list — none is planned — gets added
+// here once, not audited across four call sites by hand.
+export function upkeepTroopsOf(doc: {
+  troops: ReadonlyArray<{ unitType: string; count: number }>;
+  awayTroops: ReadonlyArray<{ unitType: string; count: number }>;
+  stationedTroops: ReadonlyArray<{ troops: ReadonlyArray<{ unitType: string; count: number }> }>;
+}): TroopCounts {
+  return unionTroops(
+    toTroopCounts(doc.troops),
+    toTroopCounts(doc.awayTroops),
+    ...doc.stationedTroops.map((contingent) => toTroopCounts(contingent.troops)),
+  );
+}
+
+// The opaque, stable, replay-safe `key` `resolveStarvation` (`game-core`, M3a.6 §4) needs to
+// address one stationed contingent — built from the two fields that together identify "this
+// account's troops from this settlement". Both `ownerAccountId` and `fromSettlementId` are
+// fixed-length (24 hex char) `ObjectId` strings, so joining them with a delimiter is
+// unambiguous regardless of which delimiter is chosen — there is no encoding ambiguity to
+// guard against the way there would be with variable-length ids.
+export function stationedContingentKey(
+  ownerAccountId: Types.ObjectId,
+  fromSettlementId: Types.ObjectId,
+): string {
+  return `${String(ownerAccountId)}:${String(fromSettlementId)}`;
+}
+
+// The instant a settlement's starvation deadline should be, given its buildings/troops and a
+// resource state (M3a.6, `docs/M3_DESIGN_DECISIONS.md` §4): `null` when net Food is >= 0 (no
+// tick needed at all), otherwise the instant stored Food is projected to hit zero —
+// `msUntilEmpty` itself returning `null` specifically means "already at/below zero" (the
+// trigger fires immediately), not "never", hence the `?? 0`. Pure and DB-free on purpose: both
+// `SettlementsService.ensureStarvationSchedule` (the lazy-scheduling choke point every
+// account command funnels through) and `StarvationTickHandler` (deciding its own follow-up
+// when the trigger no longer holds) need the identical deadline from the identical formula,
+// and neither should risk the two silently drifting apart.
+export function computeStarvationDeadline(
+  config: GameConfig,
+  buildings: BuildingLevels,
+  resourceState: { values: Resources; lastCalcAt: number },
+  troops: TroopCounts,
+  now: number,
+): number | null {
+  const netFoodPerHour = calcNetFoodPerHour(config, buildings, troops);
+  if (netFoodPerHour >= 0) {
+    return null;
+  }
+  return now + (msUntilEmpty(config, buildings, resourceState, 'food', troops) ?? 0);
 }
 
 // Current level of `type` in `buildings`, or 0 when the building hasn't been built yet.

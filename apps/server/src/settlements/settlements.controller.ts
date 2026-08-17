@@ -14,7 +14,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { CurrentAccount } from '../auth/current-account.decorator';
 import type { AccountDocument } from '../schemas/account.schema';
 import { StartBuildDto } from './dto/start-build.dto';
-import { TrainScoutsDto } from './dto/train-scouts.dto';
+import { TrainUnitsDto } from './dto/train-units.dto';
 import { SettlementsService } from './settlements.service';
 import type { SettlementStateView } from './settlements.view';
 
@@ -74,16 +74,19 @@ export class SettlementsController {
   }
 
   // 200, not 201, same rationale as `startBuild` above. No cancel counterpart exists for
-  // training (see `MAX_ACTIVE_TRAINING_ORDERS`'s comment in `settlements.constants.ts`) —
-  // this is the only training route this controller ever gains in M2b.
+  // training (see `MAX_ACTIVE_ORDERS_PER_BUILDING`'s comment in `settlements.constants.ts`)
+  // — this is the only training route this controller ever gains in M2b/M3a. The route
+  // itself is still literally `/train` (a leftover from M2b.2's scout-only `trainScouts`) —
+  // kept unchanged rather than renamed to something like `/train-units`, since renaming it
+  // would be a client-contract break and is out of scope for this generalization (M3a.5).
   @Post(':id/train')
   @HttpCode(HttpStatus.OK)
-  async trainScouts(
+  async trainUnits(
     @CurrentAccount() account: AccountDocument,
     @Param('id') id: string,
-    @Body() dto: TrainScoutsDto,
+    @Body() dto: TrainUnitsDto,
   ): Promise<SettlementStateView> {
-    return this.settlementsService.trainScouts(
+    return this.settlementsService.trainUnits(
       id,
       account._id,
       account.faction,

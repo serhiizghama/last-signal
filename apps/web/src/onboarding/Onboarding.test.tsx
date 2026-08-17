@@ -39,6 +39,8 @@ function settlementFor(account: AccountView): SettlementStateView {
     storageCaps: { scrap: 0, fuel: 0, electronics: 0, food: 0 },
     buildQueue: [],
     troops: [],
+    awayTroops: [],
+    stationedTroops: [],
     trainingQueue: [],
     influence: 0,
     serverTime: 0,

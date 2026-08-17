@@ -59,7 +59,7 @@ const ACCOUNT: AccountView = {
 };
 
 // No `faction` key at all (matches the optional field's real "unset" shape, e.g. a guest that
-// never registered — see `SettlementsService.trainScouts`'s comment on why this is rejected
+// never registered — see `SettlementsService.trainUnits`'s comment on why this is rejected
 // with `errors.training.noFaction` rather than defaulting to one).
 const ACCOUNT_NO_FACTION: AccountView = {
   id: 'acc-2',
@@ -134,6 +134,8 @@ function settlementFixture(overrides: Partial<SettlementStateView> = {}): Settle
     storageCaps: calcStorageCaps(DEFAULT_CONFIG, levels),
     buildQueue: [],
     troops: [],
+    awayTroops: [],
+    stationedTroops: [],
     trainingQueue: [],
     influence: 0,
     serverTime: 0,
@@ -646,7 +648,7 @@ describe('BaseScreen', () => {
 
 // M2c.4: scout training on the Barracks card, and the Influence display (§7/§9/§11).
 describe('Barracks training section', () => {
-  it('appears only on the Barracks card, disabled with the "no Barracks" reason when it is not built', async () => {
+  it('appears only on the Barracks card, disabled with the "building missing" reason when it is not built', async () => {
     const settlement = settlementFixture(); // BASE_BUILDINGS has no Barracks.
     renderBase(settlement);
     await flushLoad();
@@ -654,7 +656,7 @@ describe('Barracks training section', () => {
     const barracksCard = buildingCard('Казармы');
     expect(within(barracksCard).getByText('Обучение разведчиков')).toBeInTheDocument();
     expect(
-      within(barracksCard).getByText('Нужны казармы, чтобы обучать разведчиков.'),
+      within(barracksCard).getByText('Нужно построить это здание, чтобы обучать юнитов.'),
     ).toBeInTheDocument();
     expect(within(barracksCard).getByText('Начать обучение')).toBeDisabled();
 
@@ -666,7 +668,7 @@ describe('Barracks training section', () => {
     // Bypasses `Onboarding` deliberately: the real onboarding flow routes an account with no
     // faction to `RegisterScreen` before `BaseScreen` ever mounts (`Onboarding.tsx`), so the
     // only way to exercise `TrainingSection`'s `noFaction` gate — mirroring
-    // `SettlementsService.trainScouts`'s own defensive check for exactly this account state —
+    // `SettlementsService.trainUnits`'s own defensive check for exactly this account state —
     // is to render `BaseScreen` directly with a factionless account.
     const settlement = settlementFixture({
       buildings: BARRACKS_BUILDINGS,
@@ -698,7 +700,7 @@ describe('Barracks training section', () => {
     await flushLoad();
 
     const barracksCard = buildingCard('Казармы');
-    expect(within(barracksCard).getByText('В поселении уже идёт обучение.')).toBeInTheDocument();
+    expect(within(barracksCard).getByText('В этом здании уже идёт обучение.')).toBeInTheDocument();
     expect(within(barracksCard).getByText('Начать обучение')).toBeDisabled();
   });
 
@@ -792,7 +794,7 @@ describe('Barracks training section', () => {
     fireEvent.click(within(buildingCard('Казармы')).getByText('Начать обучение'));
     await flushLoad();
 
-    expect(screen.getByRole('alert')).toHaveTextContent('В поселении уже идёт обучение.');
+    expect(screen.getByRole('alert')).toHaveTextContent('В этом здании уже идёт обучение.');
   });
 
   it('shows the training queue as "N of M" with a live countdown to the next unit, and no cancel affordance', async () => {

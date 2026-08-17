@@ -9,6 +9,7 @@ import type { SettlementDocument } from '../../schemas/settlement.schema';
 import { Settlement } from '../../schemas/settlement.schema';
 import { toPlainTrainingQueueItem } from '../training-queue.util';
 import { TRAINING_COMPLETE_EVENT_TYPE } from '../settlements.constants';
+import { SettlementsService } from '../settlements.service';
 
 interface TrainingCompletePayload {
   settlementId: string;
@@ -44,6 +45,7 @@ export class TrainingCompleteHandler implements EventHandler {
   constructor(
     @InjectModel(Settlement.name) private readonly settlementModel: Model<SettlementDocument>,
     @Inject(EventSchedulerService) private readonly eventScheduler: EventSchedulerService,
+    @Inject(SettlementsService) private readonly settlementsService: SettlementsService,
   ) {}
 
   async handle(event: GameEventDocument, session: ClientSession): Promise<void> {
@@ -127,10 +129,12 @@ export class TrainingCompleteHandler implements EventHandler {
     // else: order fully delivered — stays removed above. No cancel path exists to
     // resurrect a finished order (orchestrator decision 2, `settlements.constants.ts`).
 
+    // `returnDocument: 'after'` — unlike before M3a.6, the updated doc is now needed for the
+    // `ensureStarvationSchedule` call below, not just for the null-check.
     const updated = await this.settlementModel.findOneAndUpdate(
       { _id: doc._id, version: doc.version },
       { $set: { troops, trainingQueue, version: doc.version + 1 } },
-      { session },
+      { session, returnDocument: 'after' },
     );
     if (!updated) {
       // A genuine version conflict — something else wrote to this settlement inside the
@@ -140,5 +144,14 @@ export class TrainingCompleteHandler implements EventHandler {
         `TrainingCompleteHandler: version conflict applying settlement ${String(doc._id)}`,
       );
     }
+
+    // M3a.6, `docs/M3_DESIGN_DECISIONS.md` §4: crediting a unit raises Food upkeep exactly
+    // like a command would, and this handler doesn't otherwise funnel through
+    // `SettlementsService.settleSettlementDoc` — so it must arm/reschedule/clear the
+    // settlement's starvation tick itself. `event.dueAt`, not `Date.now()`, anchors the
+    // check to when the unit actually completed in game time. See
+    // `ensureStarvationSchedule`'s own comment for why calling it here (unlike from
+    // `StarvationTickHandler`) carries no self-cancellation risk.
+    await this.settlementsService.ensureStarvationSchedule(updated, event.dueAt, session);
   }
 }

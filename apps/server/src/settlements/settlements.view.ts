@@ -7,7 +7,7 @@ import {
 } from '@last-signal/game-core';
 
 import type { SettlementDocument } from '../schemas/settlement.schema';
-import { toBuildingLevels, toTroopCounts } from './settlements.util';
+import { toBuildingLevels, upkeepTroopsOf } from './settlements.util';
 
 // Mongoose (sub)documents are not plain objects — spreading one (`{ ...doc.resources.values }`)
 // pulls in Mongoose's own internal bookkeeping properties (which circularly reference the
@@ -45,7 +45,18 @@ export interface SettlementTroopView {
   count: number;
 }
 
-// Wire shape for a `trainScouts` order — everything the client needs to render "next unit
+// A foreign contingent stationed here as support (M3 §3/§8) — wire shape for
+// `Settlement.stationedTroops`. `ownerAccountId`/`fromSettlementId` ride as strings, same
+// convention as every other id on the wire (see `accountId: String(doc.accountId)` elsewhere
+// in this file's sibling views). Always `[]` today: nothing writes `stationedTroops` until
+// the `support` movement ships in M3c (see that field's schema comment).
+export interface SettlementStationedContingentView {
+  ownerAccountId: string;
+  fromSettlementId: string;
+  troops: SettlementTroopView[];
+}
+
+// Wire shape for a `trainUnits` order — everything the client needs to render "next unit
 // in MM:SS, N of M remaining" against `serverTime` (`totalCount - remainingCount` already
 // delivered, `nextCompletesAt` the next unit's countdown target). `eventId` is deliberately
 // not exposed, same as `SettlementBuildQueueItemView` omits it — it's the scheduler's own
@@ -79,11 +90,21 @@ export interface SettlementStateView {
   netFoodPerHour: number;
   storageCaps: Resources;
   buildQueue: SettlementBuildQueueItemView[];
-  // Home troops (M2b §6/§7) — `[]` until the first `trainScouts` order completes. Already
-  // folded into `ratesPerHour.food`/`netFoodPerHour` below via `calcTroopFoodUpkeepPerHour`;
-  // surfaced separately too since the client needs the raw counts for its own UI (unit
-  // list, scout-count for the send-scout flow in a later M2b step).
+  // Home troops (M2b §6/§7) — `[]` until the first `trainUnits` order completes. Only what
+  // is physically at home right now — what a send command can draw from, what a scout-vs-scout
+  // defence roll uses. Folded, together with `awayTroops`/`stationedTroops` below, into
+  // `ratesPerHour.food`/`netFoodPerHour` via `upkeepTroopsOf`; surfaced separately too since
+  // the client needs the raw counts for its own UI (unit list, scout-count for the send-scout
+  // flow).
   troops: SettlementTroopView[];
+  // Own units currently in transit — any movement, any leg (M3 §3). This settlement still
+  // pays their Food (`upkeepTroopsOf`), which is the whole reason this list exists: see
+  // `Settlement.awayTroops`'s schema comment for the exploit it closes.
+  awayTroops: SettlementTroopView[];
+  // Foreign contingents stationed here as support (M3 §3/§8) — this settlement (the host)
+  // pays their Food too. `[]` for every settlement today; see `Settlement.stationedTroops`'s
+  // schema comment.
+  stationedTroops: SettlementStationedContingentView[];
   trainingQueue: SettlementTrainingQueueItemView[];
   influence: number;
   serverTime: number;
@@ -100,8 +121,9 @@ export function buildSettlementStateView(
   const buildings = toBuildingLevels(doc.buildings);
   // Real troops, not the `[]` default `calcNetRates`/`calcNetFoodPerHour` fall back to —
   // see those functions' own comments (`packages/game-core/src/economy/resources.ts`,
-  // `formulas/buildings.ts`) on why omitting this silently understates Food upkeep.
-  const troops = toTroopCounts(doc.troops);
+  // `formulas/buildings.ts`) on why omitting this silently understates Food upkeep. Union of
+  // all three troop lists (M3a.4, §3), not `troops` alone — see `upkeepTroopsOf`'s comment.
+  const troops = upkeepTroopsOf(doc);
 
   return {
     id: String(doc._id),
@@ -126,6 +148,12 @@ export function buildSettlementStateView(
       completesAt: item.completesAt,
     })),
     troops: doc.troops.map((t) => ({ unitType: t.unitType, count: t.count })),
+    awayTroops: doc.awayTroops.map((t) => ({ unitType: t.unitType, count: t.count })),
+    stationedTroops: doc.stationedTroops.map((contingent) => ({
+      ownerAccountId: String(contingent.ownerAccountId),
+      fromSettlementId: String(contingent.fromSettlementId),
+      troops: contingent.troops.map((t) => ({ unitType: t.unitType, count: t.count })),
+    })),
     trainingQueue: doc.trainingQueue.map((item) => ({
       id: item.id,
       unitType: item.unitType,

@@ -1,6 +1,8 @@
 import type { BuildingType } from '@last-signal/game-core';
 import {
   DEFAULT_CONFIG,
+  SETTLEMENT_SLOTS,
+  calcNetFoodPerHour,
   calcStorageCaps,
   chebyshevDistance,
   isInGrid,
@@ -9,6 +11,7 @@ import {
   spawnAnnulus,
   spawnRadius,
   terrainAt,
+  unitsTrainableAt,
 } from '@last-signal/game-core';
 import type { INestApplication } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
@@ -28,6 +31,7 @@ import type { SettlementDocument } from '../schemas/settlement.schema';
 import { Settlement } from '../schemas/settlement.schema';
 import type { WorldDocument } from '../schemas/world.schema';
 import { World } from '../schemas/world.schema';
+import { toTroopCounts } from '../settlements/settlements.util';
 import { WORLD_SINGLETON_KEY } from '../world/world.constants';
 import { WorldService } from '../world/world.service';
 import { pickNpcBand } from './npc-generator';
@@ -190,13 +194,54 @@ describe('NPC seeding (integration)', () => {
         expect(ccLevel).toBeGreaterThanOrEqual(3);
         expect(ccLevel).toBeLessThanOrEqual(7);
         expect(barracks.level).toBe(NPC_BARRACKS_LEVEL);
-        expect(settlement.troops.length).toBeLessThanOrEqual(1);
-        if (settlement.troops.length === 1) {
-          const scout = scoutUnitForFaction(DEFAULT_CONFIG, account!.faction!);
-          expect(settlement.troops[0]!.unitType).toBe(scout.type);
-          expect(settlement.troops[0]!.count).toBeGreaterThanOrEqual(0);
-          expect(settlement.troops[0]!.count).toBeLessThanOrEqual(6);
+
+        // Every Barracks-having band (developed, veteran) has a non-null `defenders` range
+        // whose minimum is > 0 (developed [10,20], veteran [30,60] — see npc.constants.ts),
+        // so a defender entry is always present here; the scout entry is optional (developed's
+        // scouts range [0,3] can roll 0; veteran's [2,6] cannot). troops.length is therefore
+        // 1 (defenders only) or 2 (scouts + defenders).
+        expect(settlement.troops.length).toBeGreaterThanOrEqual(1);
+        expect(settlement.troops.length).toBeLessThanOrEqual(2);
+
+        const scout = scoutUnitForFaction(DEFAULT_CONFIG, account!.faction!);
+        const defenseInfantry = unitsTrainableAt(
+          DEFAULT_CONFIG,
+          'barracks',
+          account!.faction!,
+        ).find((u) => u.role === 'defenseInfantry')!;
+        expect(defenseInfantry).toBeDefined();
+
+        const scoutEntry = settlement.troops.find((t) => t.unitType === scout.type);
+        if (scoutEntry) {
+          expect(scoutEntry.count).toBeGreaterThanOrEqual(1); // 0-count scouts are dropped
+          expect(scoutEntry.count).toBeLessThanOrEqual(6);
         }
+
+        const defenderEntry = settlement.troops.find((t) => t.unitType === defenseInfantry.type);
+        expect(defenderEntry).toBeDefined();
+        expect(defenderEntry!.count).toBeGreaterThanOrEqual(10);
+        expect(defenderEntry!.count).toBeLessThanOrEqual(60);
+
+        // No stray troop entries: every entry here is either the scout or the defender.
+        expect(settlement.troops.length).toBe((scoutEntry ? 1 : 0) + 1);
+
+        // The Hidden Cache: always present for a Barracks-having band (same non-null-range
+        // reasoning as defenders above), and legal per `missingPrerequisites` (already
+        // asserted for every building above, including this one).
+        const hiddenCache = buildingLevels.find((b) => b.type === 'hiddenCache');
+        expect(hiddenCache).toBeDefined();
+        expect(hiddenCache!.level).toBeGreaterThanOrEqual(2);
+        expect(hiddenCache!.level).toBeLessThanOrEqual(6);
+
+        // developed's Hidden Cache range [2,3] and veteran's [4,6] don't overlap — unlike CC
+        // level 5, the cache level unambiguously identifies the band, so it cross-checks the
+        // defender count against the *right* band's range rather than the shared union.
+        if (hiddenCache!.level <= 3) {
+          expect(defenderEntry!.count).toBeLessThanOrEqual(20); // developed's defenders cap
+        } else {
+          expect(defenderEntry!.count).toBeGreaterThanOrEqual(30); // veteran's defenders floor
+        }
+
         if (ccLevel <= 4) developedRangeCount += 1;
         if (ccLevel >= 6) veteranRangeCount += 1;
       }
@@ -210,6 +255,84 @@ describe('NPC seeding (integration)', () => {
     const developedFraction = developedRangeCount / unambiguous;
     expect(developedFraction).toBeGreaterThan(0.4); // roughly 2:1, generous bounds
     expect(developedFraction).toBeLessThan(0.9);
+  });
+
+  // §19's whole reason for existing: "135 free farms with zero defence would hand every
+  // player the §0 raid-income bound on day one" — so the world must actually contain
+  // defenders once seeded, and their presence must track the band weights (§4: 40/40/20 for
+  // young/developed/veteran), not just exist in isolated cases. `young` (no Barracks) is the
+  // only band with zero defenders; `developed` + `veteran` together are ~60% of the
+  // population and every one of them holds a defender (see the previous test: neither
+  // band's `defenders` range includes 0).
+  it('the §19 intent, asserted directly: defenders actually exist across the seeded world, and only in the bands that should have them', async () => {
+    const npcAccounts = await accountModel.find({ isNpc: true });
+    const settlements = await settlementModel.find({
+      accountId: { $in: npcAccounts.map((a) => a._id) },
+    });
+    expect(settlements.length).toBe(135);
+
+    const accountById = new Map(npcAccounts.map((a) => [String(a._id), a]));
+    let withDefenseInfantry = 0;
+    let withoutBarracks = 0;
+
+    for (const settlement of settlements) {
+      const account = accountById.get(String(settlement.accountId))!;
+      const barracks = settlement.buildings.find((b) => b.type === 'barracks');
+      const defenseInfantry = unitsTrainableAt(DEFAULT_CONFIG, 'barracks', account.faction!).find(
+        (u) => u.role === 'defenseInfantry',
+      )!;
+      const hasDefender = settlement.troops.some((t) => t.unitType === defenseInfantry.type);
+
+      if (!barracks) {
+        withoutBarracks += 1;
+        // `young` never trains anything (no Barracks), so it can never hold defence
+        // infantry either.
+        expect(hasDefender).toBe(false);
+      } else {
+        // Every Barracks-having settlement (developed/veteran) holds a defender.
+        expect(hasDefender).toBe(true);
+        withDefenseInfantry += 1;
+      }
+    }
+
+    // ~40% young (no defenders) / ~60% developed+veteran (defenders) — generous bounds
+    // around §4's 40/40/20 split, same tolerance the band-weighting test above uses.
+    expect(withDefenseInfantry / settlements.length).toBeGreaterThan(0.45);
+    expect(withDefenseInfantry / settlements.length).toBeLessThan(0.75);
+    expect(withDefenseInfantry).toBe(settlements.length - withoutBarracks);
+  });
+
+  it('every seeded NPC settlement is net-Food-non-negative at genesis (M3a.7 §19 "the Food consequence")', async () => {
+    const npcAccounts = await accountModel.find({ isNpc: true });
+    const settlements = await settlementModel.find({
+      accountId: { $in: npcAccounts.map((a) => a._id) },
+    });
+    expect(settlements.length).toBe(135);
+
+    for (const settlement of settlements) {
+      const buildingLevels = settlement.buildings.map((b) => ({
+        type: b.type as BuildingType,
+        level: b.level,
+      }));
+      const netFood = calcNetFoodPerHour(
+        DEFAULT_CONFIG,
+        buildingLevels,
+        toTroopCounts(settlement.troops),
+      );
+      expect(netFood).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('no seeded NPC settlement exceeds SETTLEMENT_SLOTS', async () => {
+    const npcAccounts = await accountModel.find({ isNpc: true });
+    const settlements = await settlementModel.find({
+      accountId: { $in: npcAccounts.map((a) => a._id) },
+    });
+    expect(settlements.length).toBe(135);
+
+    for (const settlement of settlements) {
+      expect(settlement.buildings.length).toBeLessThanOrEqual(SETTLEMENT_SLOTS);
+    }
   });
 
   it("resources sit at ~50% of each settlement's own storage caps", async () => {

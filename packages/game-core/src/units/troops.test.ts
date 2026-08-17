@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../config/index.js';
+import { UNIT_TYPES } from '../config/types.js';
 import {
   calcTroopFoodUpkeepPerHour,
   calcTroopScoutAttack,
   calcTroopScoutDefense,
   slowestTroopSpeed,
+  unionTroops,
   type TroopCounts,
 } from './troops.js';
 
@@ -73,5 +75,72 @@ describe('calcTroopScoutAttack / calcTroopScoutDefense', () => {
   it('are both 0 for an empty troop list', () => {
     expect(calcTroopScoutAttack(config, [])).toBe(0);
     expect(calcTroopScoutDefense(config, [])).toBe(0);
+  });
+});
+
+describe('unionTroops', () => {
+  it('sums duplicate unit types across lists', () => {
+    const a: TroopCounts = [{ unitType: 'lookout', count: 3 }];
+    const b: TroopCounts = [
+      { unitType: 'lookout', count: 2 },
+      { unitType: 'brute', count: 5 },
+    ];
+    const c: TroopCounts = [{ unitType: 'brute', count: 1 }];
+    expect(unionTroops(a, b, c)).toEqual([
+      { unitType: 'brute', count: 6 },
+      { unitType: 'lookout', count: 5 },
+    ]);
+  });
+
+  it('returns entries in catalogue order regardless of input order', () => {
+    const result = unionTroops([
+      { unitType: 'armoredQuad', count: 1 },
+      { unitType: 'brute', count: 1 },
+      { unitType: 'lookout', count: 1 },
+    ]);
+    const catalogueIndex = (unitType: string) =>
+      UNIT_TYPES.indexOf(unitType as (typeof UNIT_TYPES)[number]);
+    const indices = result.map((entry) => catalogueIndex(entry.unitType));
+    expect(indices).toEqual([...indices].sort((x, y) => x - y));
+  });
+
+  it('drops entries whose total is 0', () => {
+    const a: TroopCounts = [
+      { unitType: 'brute', count: 0 },
+      { unitType: 'lookout', count: 3 },
+    ];
+    expect(unionTroops(a)).toEqual([{ unitType: 'lookout', count: 3 }]);
+  });
+
+  it('returns [] for zero lists or all-empty lists', () => {
+    expect(unionTroops()).toEqual([]);
+    expect(unionTroops([], [])).toEqual([]);
+  });
+
+  it('does not mutate its inputs', () => {
+    const a: TroopCounts = [{ unitType: 'lookout', count: 1 }];
+    const b: TroopCounts = [{ unitType: 'lookout', count: 1 }];
+    const aCopy = structuredClone(a as unknown);
+    const bCopy = structuredClone(b as unknown);
+    unionTroops(a, b);
+    expect(a).toEqual(aCopy);
+    expect(b).toEqual(bCopy);
+  });
+
+  it('makes calcTroopFoodUpkeepPerHour(union) equal the sum of the individual upkeeps', () => {
+    const a: TroopCounts = [
+      { unitType: 'lookout', count: 4 },
+      { unitType: 'brute', count: 2 },
+    ];
+    const b: TroopCounts = [{ unitType: 'falconer', count: 3 }];
+    const c: TroopCounts = [
+      { unitType: 'lookout', count: 1 },
+      { unitType: 'armoredQuad', count: 5 },
+    ];
+    const summedUpkeep =
+      calcTroopFoodUpkeepPerHour(config, a) +
+      calcTroopFoodUpkeepPerHour(config, b) +
+      calcTroopFoodUpkeepPerHour(config, c);
+    expect(calcTroopFoodUpkeepPerHour(config, unionTroops(a, b, c))).toBe(summedUpkeep);
   });
 });

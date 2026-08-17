@@ -5,8 +5,10 @@ import {
   DEFAULT_CONFIG,
   HOUR_MS,
   RESOURCE_KINDS,
+  calcNetFoodPerHour,
   calcNetRates,
   calcStorageCaps,
+  calcTroopFoodUpkeepPerHour,
   resolveScoutCombat,
 } from '@last-signal/game-core';
 import type { INestApplication } from '@nestjs/common';
@@ -177,6 +179,16 @@ describe('Movements (integration)', () => {
 
   function getMine(cookie: string[]) {
     return request(app.getHttpServer()).get('/api/movements/mine').set('Cookie', cookie);
+  }
+
+  // Reads a settlement's own wire view (`GET /api/settlements/:id`) — the acceptance
+  // criterion for this suite's M3a.4 tests is stated in terms of what the *client* sees
+  // (`netFoodPerHour`, `troops`, `awayTroops`), not the raw Mongo document, so these tests
+  // go through the real read path rather than `settlementModel.findById` for those fields.
+  function getSettlement(cookie: string[], settlementId: string) {
+    return request(app.getHttpServer())
+      .get(`/api/settlements/${settlementId}`)
+      .set('Cookie', cookie);
   }
 
   // Forces the pending `movementArrive`/`movementReturn` event for a movement overdue and
@@ -480,6 +492,216 @@ describe('Movements (integration)', () => {
     expect(plainUnitEntries(defenderAfter?.troops)).toEqual(defenderTroops);
   });
 
+  // M3a.4 acceptance criterion (`docs/M3_DESIGN_DECISIONS.md` §20, §19.1): "sending an army
+  // away leaves upkeep unchanged (gap #1 closed, asserted numerically)". Before this step,
+  // `netFoodPerHour` was computed from `troops` alone, so marching every unit out dropped
+  // upkeep to zero — a live exploit the moment armies exist. These tests go through the real
+  // `GET /api/settlements/:id` read path (not the raw Mongo document) because that's the
+  // number the client actually sees and the exploit actually hid behind.
+  describe('M3a.4: awayTroops accounting closes the in-flight upkeep exploit', () => {
+    it('sending troops away leaves netFoodPerHour exactly unchanged, and moves the counts troops -> awayTroops', async () => {
+      const attacker = await createGuestSession();
+      const defender = await createGuestSession();
+      const troops = [{ unitType: 'falconer', count: 3 }];
+      const buildings: BuildingLevels = [{ type: 'commandCenter', level: 1 }];
+      const attackerSettlement = await seedSettlementAt(attacker.accountId, 0, 0, { troops });
+      await seedSettlementAt(defender.accountId, 5, 0);
+
+      const expectedNetFood = calcNetFoodPerHour(config, buildings, troops as TroopCounts);
+
+      const before = await getSettlement(attacker.cookie, String(attackerSettlement._id));
+      expect(before.status).toBe(200);
+      expect(before.body.netFoodPerHour).toBeCloseTo(expectedNetFood, 6);
+      expect(before.body.troops).toEqual(troops);
+      expect(before.body.awayTroops).toEqual([]);
+
+      const sendResponse = await postSend(attacker.cookie, {
+        type: 'scout',
+        fromSettlementId: String(attackerSettlement._id),
+        target: { x: 5, y: 0 },
+        units: troops,
+      });
+      expect(sendResponse.status).toBe(201);
+
+      const after = await getSettlement(attacker.cookie, String(attackerSettlement._id));
+      expect(after.status).toBe(200);
+      // Exactly equal, not just close — `netFoodPerHour` is a pure function of buildings and
+      // the *union* of the three troop lists (`upkeepTroopsOf`), not of elapsed time, so an
+      // army moving `troops -> awayTroops` must produce the bit-identical number.
+      expect(after.body.netFoodPerHour).toBe(before.body.netFoodPerHour);
+      expect(after.body.troops).toEqual([]);
+      expect(after.body.awayTroops).toEqual(troops);
+    });
+
+    it('round trip: after the return handler runs, awayTroops is empty again, troops match the original, and netFoodPerHour matches the original', async () => {
+      const attacker = await createGuestSession();
+      const defender = await createGuestSession();
+      const troops = [{ unitType: 'falconer', count: 2 }];
+      const attackerSettlement = await seedSettlementAt(attacker.accountId, 0, 0, { troops });
+      // No defenders at home: the scouts pass undetected and every one of them survives
+      // (mirrors the "undetected" test above) — a clean round trip with nothing to lose.
+      await seedSettlementAt(defender.accountId, 5, 0, { troops: [] });
+
+      const before = await getSettlement(attacker.cookie, String(attackerSettlement._id));
+
+      const sendResponse = await postSend(attacker.cookie, {
+        type: 'scout',
+        fromSettlementId: String(attackerSettlement._id),
+        target: { x: 5, y: 0 },
+        units: troops,
+      });
+      expect(sendResponse.status).toBe(201);
+      const movementId = sendResponse.body.id as string;
+
+      await forceArrive(movementId);
+      await forceReturn(movementId);
+
+      const after = await getSettlement(attacker.cookie, String(attackerSettlement._id));
+      expect(after.body.troops).toEqual(troops);
+      expect(after.body.awayTroops).toEqual([]);
+      expect(after.body.netFoodPerHour).toBe(before.body.netFoodPerHour);
+    });
+
+    it('losses leave awayTroops at arrival (survivors stay away until they actually land), and netFoodPerHour rises by exactly the dead units’ upkeep', async () => {
+      const attacker = await createGuestSession();
+      const defender = await createGuestSession();
+      const troops = [{ unitType: 'falconer', count: 2 }];
+      const attackerSettlement = await seedSettlementAt(attacker.accountId, 0, 0, { troops });
+      const defenderTroops = [{ unitType: 'lookout', count: 2 }];
+      await seedSettlementAt(defender.accountId, 5, 0, { troops: defenderTroops });
+
+      const sendResponse = await postSend(attacker.cookie, {
+        type: 'scout',
+        fromSettlementId: String(attackerSettlement._id),
+        target: { x: 5, y: 0 },
+        units: troops,
+      });
+      expect(sendResponse.status).toBe(201);
+      const movementId = sendResponse.body.id as string;
+
+      const beforeArrive = await getSettlement(attacker.cookie, String(attackerSettlement._id));
+      expect(beforeArrive.body.awayTroops).toEqual(troops);
+
+      // Hand-computed via the real `game-core` formula, same convention as the acceptance
+      // test above: pins the exact losses this test's assertions depend on.
+      const expectedCombat = resolveScoutCombat(
+        config,
+        troops as TroopCounts,
+        defenderTroops as TroopCounts,
+      );
+      expect(expectedCombat.losses).toEqual([{ unitType: 'falconer', count: 1 }]);
+
+      await forceArrive(movementId);
+
+      const afterArrive = await getSettlement(attacker.cookie, String(attackerSettlement._id));
+      // 2 sent, 1 died at arrival, 1 survives and stays "away" until the return leg lands it
+      // home (`MovementReturnHandler`'s job, not `MovementArriveHandler`'s).
+      expect(afterArrive.body.awayTroops).toEqual([{ unitType: 'falconer', count: 1 }]);
+
+      const deadUpkeepPerHour = calcTroopFoodUpkeepPerHour(config, [
+        { unitType: 'falconer', count: 1 },
+      ]);
+      expect(afterArrive.body.netFoodPerHour).toBeCloseTo(
+        beforeArrive.body.netFoodPerHour + deadUpkeepPerHour,
+        6,
+      );
+    });
+
+    it('total wipe: every attacking unit leaves awayTroops, and netFoodPerHour returns to the no-troops value', async () => {
+      const attacker = await createGuestSession();
+      const defender = await createGuestSession();
+      const troops = [{ unitType: 'falconer', count: 1 }];
+      const buildings: BuildingLevels = [{ type: 'commandCenter', level: 1 }];
+      const attackerSettlement = await seedSettlementAt(attacker.accountId, 0, 0, { troops });
+      const defenderTroops = [{ unitType: 'lookout', count: 3 }];
+      await seedSettlementAt(defender.accountId, 5, 0, { troops: defenderTroops });
+
+      const sendResponse = await postSend(attacker.cookie, {
+        type: 'scout',
+        fromSettlementId: String(attackerSettlement._id),
+        target: { x: 5, y: 0 },
+        units: troops,
+      });
+      expect(sendResponse.status).toBe(201);
+      const movementId = sendResponse.body.id as string;
+
+      const expectedCombat = resolveScoutCombat(
+        config,
+        troops as TroopCounts,
+        defenderTroops as TroopCounts,
+      );
+      expect(expectedCombat.anySurvived).toBe(false);
+
+      await forceArrive(movementId);
+
+      const after = await getSettlement(attacker.cookie, String(attackerSettlement._id));
+      expect(after.body.troops).toEqual([]);
+      expect(after.body.awayTroops).toEqual([]);
+
+      const noTroopsNetFood = calcNetFoodPerHour(config, buildings, []);
+      expect(after.body.netFoodPerHour).toBeCloseTo(noTroopsNetFood, 6);
+    });
+
+    // Upgrade-boundary safety: every movement already in flight the instant this step
+    // deploys predates `awayTroops` entirely — it was deducted from `troops` at send under
+    // the pre-M3a.4 code path, which never touched `awayTroops`, so the settlement's
+    // `awayTroops` is `[]` even though a `returning` movement is carrying real survivors home.
+    // `subtractUnitCounts` must clamp rather than throw here (see its own comment): the
+    // survivors are already a resolved fact by the time the handler runs, and a thrown error
+    // would dead-letter the event after retries, permanently losing the army instead of
+    // crediting it — the exact failure this test exists to rule out.
+    it('upgrade-boundary safety: awayTroops: [] does not stop a returning movement crediting its survivors home', async () => {
+      const attacker = await createGuestSession();
+      const attackerSettlement = await seedSettlementAt(attacker.accountId, 0, 0, {
+        // Already debited at send time by the (pre-M3a.4) code that deducted `troops` but
+        // never wrote `awayTroops` — exactly the state a movement sent before this step
+        // shipped would be in.
+        troops: [],
+      });
+
+      const survivors = [{ unitType: 'falconer', count: 2 }];
+      const movement = await movementModel.create({
+        ownerAccountId: attacker.accountId,
+        type: 'scout',
+        fromSettlementId: attackerSettlement._id,
+        toSettlementId: new Types.ObjectId(),
+        target: { x: 5, y: 0 },
+        units: survivors,
+        survivors,
+        departAt: Date.now() - 120_000,
+        arriveAt: Date.now() - 60_000,
+        returnAt: Date.now() - 1_000,
+        status: 'returning',
+        version: 0,
+      });
+
+      const event = await eventModel.create({
+        type: 'movementReturn',
+        dueAt: Date.now() - 1_000,
+        payload: { movementId: String(movement._id) },
+      });
+
+      // No wrapping try/catch around the handler call itself: if `subtractUnitCounts` threw
+      // (the behaviour this test rules out), this `await` would reject and the test would
+      // fail right here with that error — the same implicit "does not throw" proof
+      // `replayArrive`/`replayReturn` above rely on.
+      const session = await connection.startSession();
+      try {
+        await session.withTransaction(async () => {
+          await movementReturnHandler.handle(event, session);
+        });
+      } finally {
+        await session.endSession();
+      }
+
+      const after = await settlementModel.findById(attackerSettlement._id);
+      expect(plainUnitEntries(after?.troops)).toEqual(survivors);
+      // Clamped at zero, not negative — the whole point of this test.
+      expect(plainUnitEntries(after?.awayTroops)).toEqual([]);
+      expect((await movementModel.findById(movement._id))?.status).toBe('done');
+    });
+  });
+
   it('cancel: within the window flips to returning at departAt + 2*elapsed and deletes the arrive event', async () => {
     const attacker = await createGuestSession();
     const defender = await createGuestSession();
@@ -639,6 +861,12 @@ describe('Movements (integration)', () => {
     expect(afterFirst?.status).toBe('returning');
     expect(await reportModel.countDocuments({ accountId: attacker.accountId })).toBe(1);
     expect(await reportModel.countDocuments({ accountId: defender.accountId })).toBe(1);
+    // M3a.4: 2 falconers sent, 1 died at arrival — `awayTroops` holds exactly the survivor
+    // that's still in transit (not yet home).
+    const originAfterFirst = await settlementModel.findById(attackerSettlement._id);
+    expect(plainUnitEntries(originAfterFirst?.awayTroops)).toEqual([
+      { unitType: 'falconer', count: 1 },
+    ]);
 
     await replayArrive();
     const afterSecond = await movementModel.findById(movementId);
@@ -648,6 +876,11 @@ describe('Movements (integration)', () => {
     );
     expect(await reportModel.countDocuments({ accountId: attacker.accountId })).toBe(1);
     expect(await reportModel.countDocuments({ accountId: defender.accountId })).toBe(1);
+    // Replaying the handler again must not subtract the same loss from `awayTroops` twice.
+    const originAfterSecond = await settlementModel.findById(attackerSettlement._id);
+    expect(plainUnitEntries(originAfterSecond?.awayTroops)).toEqual(
+      plainUnitEntries(originAfterFirst?.awayTroops),
+    );
   });
 
   it('idempotency: replaying movementReturn is a no-op (no double credit)', async () => {
@@ -692,10 +925,16 @@ describe('Movements (integration)', () => {
     const afterFirst = await settlementModel.findById(attackerSettlement._id);
     expect(plainUnitEntries(afterFirst?.troops)).toEqual([{ unitType: 'falconer', count: 1 }]);
     expect((await movementModel.findById(movementId))?.status).toBe('done');
+    // M3a.4: the 1 surviving falconer just landed home — `awayTroops` drops back to empty,
+    // not double-subtracted or left stuck at the post-arrival "1 still away" figure.
+    expect(plainUnitEntries(afterFirst?.awayTroops)).toEqual([]);
 
     await replayReturn();
     const afterSecond = await settlementModel.findById(attackerSettlement._id);
     expect(plainUnitEntries(afterSecond?.troops)).toEqual([{ unitType: 'falconer', count: 1 }]);
+    // Replaying the handler again must not subtract the same survivor from `awayTroops`
+    // twice (which would throw inside `subtractUnitCounts` — that it doesn't is the point).
+    expect(plainUnitEntries(afterSecond?.awayTroops)).toEqual([]);
   });
 
   it('the playbook race: two concurrent sends of the same last scout — exactly one succeeds, troops never go negative, exactly one movement exists', async () => {

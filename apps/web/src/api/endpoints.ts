@@ -60,9 +60,10 @@ export function cancelBuild(
   );
 }
 
-// §7/§11: one route, `{unitType, count}` for the caller's own faction scout — the server
-// resolves that against `account.faction` itself (`TrainScoutsDto`'s own comment), so the
-// client never needs to send anything else.
+// §7/§11: one route, `{unitType, count}` — the server resolves faction ownership against
+// `account.faction` itself (`TrainUnitsDto`'s own comment). The Barracks card (M3a.5's only
+// client caller today) still only ever sends its own faction's scout; the server's
+// `trainUnits` command behind this same route already accepts the whole roster.
 export function trainScouts(
   id: string,
   unitType: UnitType,

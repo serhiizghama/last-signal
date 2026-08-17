@@ -16,6 +16,7 @@ import {
   pickSpawnTile,
   scoutUnitForFaction,
   terrainAt,
+  unitsTrainableAt,
 } from '@last-signal/game-core';
 import { Types } from 'mongoose';
 
@@ -67,14 +68,17 @@ export interface NpcBuildingSlot {
 }
 
 /**
- * Builds one NPC settlement's building list for `band` (§4): Command Center first (always
- * present, at slot 0), then each of `NPC_RESOURCE_BUILDING_TYPES` whose prerequisites are
- * already satisfied by what's been picked so far, then Barracks under the same prerequisite
- * check when the band calls for one. Slots are simply the array index — at most 6 buildings
- * ever get placed here, far under `SETTLEMENT_SLOTS` (16), so plain sequential assignment
- * can never collide. Every level is clamped to the building's own `maxLevel` as a defensive
- * backstop (§4's draft ranges never approach any `maxLevel` today, but this keeps the
- * function correct if they're tuned closer later).
+ * Builds one NPC settlement's building list for `band` (§4, extended by §19 for the Hidden
+ * Cache): Command Center first (always present, at slot 0), then each of
+ * `NPC_RESOURCE_BUILDING_TYPES` whose prerequisites are already satisfied by what's been
+ * picked so far, then Barracks and finally the Hidden Cache under the same prerequisite
+ * check when the band calls for them. Slots are simply the array index — at most 7 buildings
+ * ever get placed here (Command Center + up to 4 resource buildings + Barracks + Hidden
+ * Cache), far under `SETTLEMENT_SLOTS` (16), so plain sequential assignment can never
+ * collide. Every level is clamped to the building's own `maxLevel` as a defensive backstop
+ * (§4/§19's draft ranges never approach any `maxLevel` today — the Hidden Cache's is 10, and
+ * the highest drawn level is `veteran`'s 6 — but this keeps the function correct if the
+ * ranges are tuned closer later).
  */
 export function buildNpcBuildings(
   config: GameConfig,
@@ -105,6 +109,18 @@ export function buildNpcBuildings(
     levels.push({ type: 'barracks', level: NPC_BARRACKS_LEVEL });
   }
 
+  // §19: the Hidden Cache protects an NPC's stored resources from raid loot once raiding
+  // ships (M3c). It has no prerequisites in `game-core`'s catalogue today, but the
+  // `missingPrerequisites` check stays here (rather than placing it unconditionally) so a
+  // future prerequisite added to Hidden Cache can never silently produce an illegal NPC
+  // settlement — the same uniform-legality reasoning the resource buildings and Barracks
+  // above already follow.
+  if (band.hiddenCache && missingPrerequisites(config, levels, 'hiddenCache').length === 0) {
+    const maxLevel = config.buildings.hiddenCache.maxLevel;
+    const level = Math.min(randInt(rng, band.hiddenCache[0], band.hiddenCache[1]), maxLevel);
+    levels.push({ type: 'hiddenCache', level });
+  }
+
   return levels.map((entry, index) => ({
     id: randomUUID(),
     type: entry.type,
@@ -118,22 +134,54 @@ export interface NpcTroopEntry {
   count: number;
 }
 
-/** Draws the band's scout count (§4) for `faction`'s own scout unit; `[]` for `young` (no troops). */
+/**
+ * Draws the band's scout count (§4) for `faction`'s own scout unit, then its defender count
+ * (§19) for `faction`'s own `defenseInfantry` unit — resolved via `unitsTrainableAt`'s `role`
+ * filter, never a hardcoded unit-type name, since each faction's defence infantry differs
+ * (Torcher / Bulwark / Hunter-Sniper). `[]` for `young` (no troops of any kind).
+ *
+ * Draw order (scouts, then defenders) is part of this world's determinism contract: `rng` is
+ * a stream, so the two draws must happen in a fixed, stable order or every NPC in a world
+ * regenerated from the same seed would change. Scouts stay first because that's the order
+ * M2a.5 already shipped and tested; defenders are appended after rather than inserted before,
+ * so this change does not reshuffle any existing NPC's scout count.
+ */
 export function buildNpcTroops(
   config: GameConfig,
   band: NpcBandDef,
   faction: Faction,
   rng: NpcRng,
 ): NpcTroopEntry[] {
-  if (!band.scouts) {
-    return [];
+  const troops: NpcTroopEntry[] = [];
+
+  if (band.scouts) {
+    const scoutCount = randInt(rng, band.scouts[0], band.scouts[1]);
+    if (scoutCount > 0) {
+      const scout = scoutUnitForFaction(config, faction);
+      troops.push({ unitType: scout.type, count: scoutCount });
+    }
   }
-  const count = randInt(rng, band.scouts[0], band.scouts[1]);
-  if (count === 0) {
-    return [];
+
+  if (band.defenders) {
+    const defenderCount = randInt(rng, band.defenders[0], band.defenders[1]);
+    if (defenderCount > 0) {
+      const defenseInfantry = unitsTrainableAt(config, 'barracks', faction).find(
+        (unit) => unit.role === 'defenseInfantry',
+      );
+      if (!defenseInfantry) {
+        // Every faction has exactly one Barracks-trained `defenseInfantry` unit
+        // (`catalogue.test.ts` asserts this for the whole roster) — this can only fire if
+        // that invariant is ever broken, and a loud failure here beats a silently
+        // defenderless NPC.
+        throw new RangeError(
+          `buildNpcTroops: no defenseInfantry unit found for faction "${faction}"`,
+        );
+      }
+      troops.push({ unitType: defenseInfantry.type, count: defenderCount });
+    }
   }
-  const scout = scoutUnitForFaction(config, faction);
-  return [{ unitType: scout.type, count }];
+
+  return troops;
 }
 
 /** Resources at `NPC_RESOURCE_FILL_RATIO` of this settlement's own storage caps (§4). */

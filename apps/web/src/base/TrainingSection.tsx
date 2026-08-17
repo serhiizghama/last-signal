@@ -36,8 +36,8 @@ function useTrainBlockReasonText(block: TrainBlockReason | undefined): string | 
   switch (block.kind) {
     case 'noFaction':
       return tErrors('training.noFaction');
-    case 'noBarracks':
-      return tErrors('training.noBarracks');
+    case 'buildingMissing':
+      return tErrors('training.buildingMissing');
     case 'queueBusy':
       return tErrors('training.queueBusy');
     case 'wouldStarve':
@@ -122,6 +122,11 @@ function HomeTroopsList({ troops }: HomeTroopsListProps): ReactElement {
  * button (`buildEligibility.ts`/`trainEligibility.ts`). The reasons are computed client-side
  * from `game-core` so the player sees them before submitting; a server rejection still renders
  * through the same `errors.training.*` i18n path via `ErrorPanel`.
+ *
+ * Still trains only the faction's own scout, at the Barracks (M3a.5): the server's
+ * `trainUnits` already accepts the whole roster across all three training buildings, but
+ * widening this card into the full Units tab (unit picker, Machine Shop/Command Center cards)
+ * is deliberately M3e's job, not this step's — see `computeTrainEligibility`'s own comment.
  */
 export function TrainingSection({ settlement, live, account }: TrainingSectionProps): ReactElement {
   const { t } = useTranslation();
@@ -132,7 +137,7 @@ export function TrainingSection({ settlement, live, account }: TrainingSectionPr
   const eligibility = computeTrainEligibility(
     DEFAULT_CONFIG,
     live.buildings,
-    settlement.trainingQueue.length,
+    settlement.trainingQueue,
     live.troops,
     live.values,
     account.faction,

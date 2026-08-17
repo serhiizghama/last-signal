@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { GameConfig, Resources } from '@last-signal/game-core';
+import type { BuildingType, GameConfig, Resources, UnitType } from '@last-signal/game-core';
 import {
   RESOURCE_KINDS,
   addResources,
@@ -11,8 +11,8 @@ import {
   calcTrainCost,
   calcTrainTimeMs,
   canAfford,
+  canFactionTrain,
   missingPrerequisites,
-  scoutUnitForFaction,
   settleResources,
   settlementsAllowed,
   subtractResources,
@@ -36,11 +36,13 @@ import { GAME_CONFIG } from '../game-config/game-config.tokens';
 import {
   ACTIVE_BUILD_SLOTS,
   BUILD_COMPLETE_EVENT_TYPE,
-  MAX_ACTIVE_TRAINING_ORDERS,
+  MAX_ACTIVE_ORDERS_PER_BUILDING,
   MAX_COMMAND_ATTEMPTS,
   MAX_CREATE_SETTLEMENT_ATTEMPTS,
   MAX_TRAIN_COUNT,
   STARTING_RESOURCES,
+  STARVATION_RESCHEDULE_EPSILON_MS,
+  STARVATION_TICK_EVENT_TYPE,
   TRAINING_COMPLETE_EVENT_TYPE,
   WAITING_QUEUE_SLOTS,
 } from './settlements.constants';
@@ -53,11 +55,12 @@ import {
   VersionConflictError,
 } from './settlements.errors';
 import {
+  computeStarvationDeadline,
   currentLevelOf,
   isBuildingType,
   isUnitType,
   toBuildingLevels,
-  toTroopCounts,
+  upkeepTroopsOf,
 } from './settlements.util';
 import type { SettlementStateView } from './settlements.view';
 import { buildSettlementStateView } from './settlements.view';
@@ -156,8 +159,10 @@ export class SettlementsService {
 
       // Real troops, not the implicit `[]` default — a settlement with scouts already
       // eating into net Food must not be able to start a build that pushes it negative
-      // just because the build gate "forgot" upkeep exists (M2b §7 correctness fix).
-      const troops = toTroopCounts(settled.troops);
+      // just because the build gate "forgot" upkeep exists (M2b §7 correctness fix). Union
+      // of all three troop lists (M3a.4, §3), not `troops` alone — an army marching out, or
+      // stationed here as a guest, still counts against this gate (`upkeepTroopsOf`).
+      const troops = upkeepTroopsOf(settled);
       if (wouldStarveSettlement(this.config, buildings, type, targetLevel, troops)) {
         throw new BuildCommandError('errors.build.wouldStarve', { type, targetLevel });
       }
@@ -291,14 +296,15 @@ export class SettlementsService {
     });
   }
 
-  // The `trainScouts` command (M2b.2, `docs/M2_DESIGN_DECISIONS.md` §7), playbook recipe:
-  // settle first, validate via `game-core`, deduct the whole batch's cost at enqueue,
-  // version-guarded write, schedule the first `trainingComplete` event same-session. `faction`
-  // comes from the caller's own `AccountDocument` (the controller passes `account.faction`
-  // straight through) rather than this method re-reading the account — the ownership choke
-  // point already lives in `settleSettlementDoc` for the settlement side, and there is no
-  // second document to version-guard here for the account (faction is chosen once at
-  // registration and never changes, §13 of the M1 record).
+  // The `trainUnits` command — generalized in M3a.5 (`docs/M3_DESIGN_DECISIONS.md` §2) from
+  // M2b.2's scout-only `trainScouts`. Playbook recipe unchanged from M2b.2: settle first,
+  // validate via `game-core`, deduct the whole batch's cost at enqueue, version-guarded
+  // write, schedule the first `trainingComplete` event same-session. `faction` comes from
+  // the caller's own `AccountDocument` (the controller passes `account.faction` straight
+  // through) rather than this method re-reading the account — the ownership choke point
+  // already lives in `settleSettlementDoc` for the settlement side, and there is no second
+  // document to version-guard here for the account (faction is chosen once at registration
+  // and never changes, §13 of the M1 record).
   //
   // Validation order (deliberate, not incidental — see each check's own comment): pure
   // input-shape / account-identity checks first, since they need no settlement state and
@@ -306,7 +312,7 @@ export class SettlementsService {
   // settlement-state checks from cheapest/most-fundamental to most-expensive, affordability
   // last (mirrors `startBuild`'s own affordability-last ordering, and needs the exact `cost`
   // this order would spend anyway).
-  async trainScouts(
+  async trainUnits(
     settlementId: string,
     accountId: Types.ObjectId,
     faction: Faction | undefined,
@@ -331,16 +337,13 @@ export class SettlementsService {
         throw new TrainCommandError('errors.training.noFaction');
       }
 
-      // 3. Is the requested unit actually this faction's own scout? (orchestrator decision
-      // 4) Every faction has exactly one scout (`scoutUnitForFaction` throws only on an
-      // unknown faction, which `isFaction` at registration already rules out).
-      const scout = scoutUnitForFaction(this.config, faction);
-      if (unitType !== scout.type) {
-        throw new TrainCommandError('errors.training.wrongFaction', {
-          unitType,
-          faction,
-          expected: scout.type,
-        });
+      // 3. Is the unit trainable at all, and by this faction? `canFactionTrain` covers both
+      // in one call (M3 §2): the two wildlife types have no `trainedIn` at all and are
+      // rejected here regardless of faction, and every other unit must either belong to
+      // `faction` or be faction-neutral (`faction: null`, today only the Settler) — replaces
+      // M2b.2's narrower "is this the faction's own scout" check now that the roster is open.
+      if (!canFactionTrain(this.config, unitType, faction)) {
+        throw new TrainCommandError('errors.training.wrongFaction', { unitType, faction });
       }
 
       // 4. Is `count` a sane batch size? Checked once we know *what* is being trained, so a
@@ -355,27 +358,44 @@ export class SettlementsService {
 
       const buildings = toBuildingLevels(settled.buildings);
 
-      // 5. Structural capability: no Barracks, no training, ever — independent of anything
-      // transient (queue state, resources).
-      if (currentLevelOf(buildings, 'barracks') < 1) {
-        throw new TrainCommandError('errors.training.noBarracks');
+      // 5. Which building trains this unit? Guaranteed present — check 3's `canFactionTrain`
+      // only ever accepts a unit that has a real `trainedIn` — so this is a plain lookup, not
+      // a second validation pass.
+      const building = this.config.units[unitType].trainedIn as BuildingType;
+
+      // 6. Structural capability: *that* training building must exist (level >= 1),
+      // independent of anything transient (queue state, resources) — mirrors `startBuild`'s
+      // own "does the building exist at all" ordering. In practice this can only ever fire
+      // for the Barracks or the Machine Shop: the Command Center is seeded at level 1 by
+      // `createSettlement` and never removed, so a Settler order can't trip it — but the
+      // check stays uniform across all three training buildings rather than special-casing
+      // the Command Center out.
+      if (currentLevelOf(buildings, building) < 1) {
+        throw new TrainCommandError('errors.training.buildingMissing', { building });
       }
 
-      // 6. Transient state: one active order at a time (orchestrator decision 1,
-      // `MAX_ACTIVE_TRAINING_ORDERS`).
-      if (settled.trainingQueue.length >= MAX_ACTIVE_TRAINING_ORDERS) {
-        throw new TrainCommandError('errors.training.queueBusy');
+      // 7. One active order **per training building**, not per settlement — M3's widening of
+      // M2b.2's per-settlement cap (§2, `MAX_ACTIVE_ORDERS_PER_BUILDING`): a Barracks order
+      // and a Machine Shop order may now run simultaneously. Each existing order's building
+      // is derived from its own `unitType` (`config.units[...].trainedIn`), not stored on the
+      // queue item itself — no schema change.
+      const ordersAtThisBuilding = settled.trainingQueue.filter(
+        (item) => this.config.units[item.unitType as UnitType].trainedIn === building,
+      ).length;
+      if (ordersAtThisBuilding >= MAX_ACTIVE_ORDERS_PER_BUILDING) {
+        throw new TrainCommandError('errors.training.queueBusy', { building });
       }
 
-      // 7. The Food gate: the *whole batch*, on top of troops already at home — same
-      // absolute-gate shape as the build gate (§7, M1 §4).
-      const existingTroops = toTroopCounts(settled.troops);
+      // 8. The Food gate: the *whole batch*, on top of troops already at home — same
+      // absolute-gate shape as the build gate (§7, M1 §4). Union of all three lists
+      // (M3a.4, §3) — see `upkeepTroopsOf`'s own comment.
+      const existingTroops = upkeepTroopsOf(settled);
       const addedTroops = [{ unitType, count }];
       if (wouldStarveWithTroops(this.config, buildings, existingTroops, addedTroops)) {
         throw new TrainCommandError('errors.training.wouldStarve', { unitType, count });
       }
 
-      // 8. Affordability last — needs the exact cost, which every earlier check was cheaper
+      // 9. Affordability last — needs the exact cost, which every earlier check was cheaper
       // to compute without.
       const cost = calcTrainCost(this.config, unitType, count);
       if (!canAfford(settled.resources.values, cost)) {
@@ -385,7 +405,13 @@ export class SettlementsService {
       }
 
       const newValues = subtractResources(settled.resources.values, cost);
-      const unitTrainTimeMs = calcTrainTimeMs(this.config, unitType);
+      // The training building's level was already validated `>= 1` in check 6 above, so the
+      // RangeError guard `calcTrainTimeMs` has for a sub-1 level can never fire here.
+      const unitTrainTimeMs = calcTrainTimeMs(
+        this.config,
+        unitType,
+        currentLevelOf(buildings, building),
+      );
       const orderId = randomUUID();
       const nextCompletesAt = now + unitTrainTimeMs;
 
@@ -549,7 +575,9 @@ export class SettlementsService {
   // Ownership-free and id-free by design (M2b.3 split — see `settleSettlementDoc` and
   // `settleSettlementDocUnchecked` below for the two id-lookup entry points built on top of
   // this): the one and only settle implementation, so neither entry point can silently drift
-  // from the other.
+  // from the other. Deliberately does NOT also run the M3a.6 starvation lazy-scheduling
+  // check (`ensureStarvationSchedule`, below) — see that method's own comment for why it
+  // lives one layer up, in `settleSettlementDoc` only.
   private async settleDoc(
     doc: SettlementDocument,
     now: number,
@@ -568,8 +596,10 @@ export class SettlementsService {
       now,
       // Troop Food upkeep applies from the moment scouts are credited (M2b §7) — omitting
       // this would silently understate upkeep and let Food accrue as if the settlement had
-      // no troops at all.
-      toTroopCounts(doc.troops),
+      // no troops at all. Union of `troops`/`awayTroops`/`stationedTroops` (M3a.4, §3), not
+      // `troops` alone — see `upkeepTroopsOf`'s own comment on why this is the fix for
+      // "marching an army away drops its Food upkeep to zero".
+      upkeepTroopsOf(doc),
     );
 
     const updated = await this.settlementModel.findOneAndUpdate(
@@ -578,6 +608,121 @@ export class SettlementsService {
         $set: {
           'resources.values': settled.values,
           'resources.lastCalcAt': settled.lastCalcAt,
+          version: doc.version + 1,
+        },
+      },
+      { session, returnDocument: 'after' },
+    );
+    if (!updated) {
+      throw new VersionConflictError();
+    }
+    return updated;
+  }
+
+  // M3a.6 §4's "ensure exactly one pending tick" logic — the lazy-scheduling choke point.
+  // Record §4 is explicit that this must run "when a command **or handler** settles a
+  // settlement and sees net Food < 0", so this is `public`, not `private`: called from
+  // `settleSettlementDoc` below (every account command) AND, after applying their own
+  // effect and inside their own session, from `BuildCompleteHandler` and
+  // `TrainingCompleteHandler` (a finished build/unit changes upkeep just as a command would,
+  // and neither of those two handlers otherwise funnels through `settleSettlementDoc`).
+  // Computes where the deadline should be *right now* (`computeStarvationDeadline`, pure —
+  // shared with `StarvationTickHandler`, so every caller agrees on the formula) and
+  // reconciles it against `doc.pendingStarvationEventId`/`doc.pendingStarvationDueAt`:
+  //
+  // - Not starving, nothing pending: no-op (the overwhelming common case).
+  // - Not starving, something pending (net Food just recovered — a Greenhouse finished, or
+  //   troops died): cancel it, clear both fields.
+  // - Starving, nothing pending: schedule the first tick.
+  // - Starving, something pending, deadline effectively unchanged (within
+  //   `STARVATION_RESCHEDULE_EPSILON_MS` — see that constant's own comment): no-op, so a run
+  //   of commands against an otherwise-unperturbed starving settlement leaves exactly one
+  //   pending tick rather than cancel-and-rescheduling it on every call.
+  // - Starving, something pending, deadline genuinely moved (Food was spent/refunded, or
+  //   troop/building upkeep changed): cancel the stale event, schedule a fresh one.
+  //
+  // Deliberately NOT folded into `settleDoc` itself, and deliberately NOT called from
+  // `settleSettlementDocUnchecked` (the scheduler-driven, ownership-free settle seam used by
+  // `MovementArriveHandler`, and — for its own self-settle — `StarvationTickHandler`): a
+  // handler that is *currently processing* its own settlement's pending tick must not have
+  // this generic lazy-scheduler cancel-and-reschedule that very event out from under it. That
+  // is exactly what an earlier version of this code did by running this check as a side
+  // effect of every settle call: `StarvationTickHandler` would settle-to-`event.dueAt`,
+  // trip this method's "deadline moved" branch purely because `event.dueAt` (the anchor used
+  // as `now`) didn't exactly equal the stored `pendingStarvationDueAt` — which the scheduler's
+  // own backoff/retry can legitimately cause (`SchedulerService.recordFailure` reassigns
+  // `event.dueAt` on a retry, independent of anything stored on the settlement) — and cancel
+  // the very event the handler was mid-way through applying, leaving stray duplicate events
+  // behind. `StarvationTickHandler` now manages its own follow-up explicitly instead (see
+  // that class's own comment).
+  //
+  // `BuildCompleteHandler`/`TrainingCompleteHandler` do NOT have this hazard, and it's worth
+  // spelling out why: `SchedulerService.runOnce` claims and dispatches events strictly one
+  // at a time (`for (;;) { claim; await dispatch(claimed); }`) — a `buildComplete` or
+  // `trainingComplete` event for settlement S can therefore never be *in flight* at the same
+  // moment as an S-owned `starvationTick` event, because only one event is ever mid-dispatch
+  // anywhere in the process. So when these two handlers call this method, whatever
+  // `doc.pendingStarvationEventId` currently points at (if anything) is guaranteed to be a
+  // merely-*scheduled* tick sitting `due`, never one this same call stack is mid-way through
+  // applying — exactly the property that made calling it from `StarvationTickHandler` unsafe,
+  // and exactly the property these two handlers have instead.
+  async ensureStarvationSchedule(
+    doc: SettlementDocument,
+    now: number,
+    session: ClientSession,
+  ): Promise<SettlementDocument> {
+    const buildings = toBuildingLevels(doc.buildings);
+    const troops = upkeepTroopsOf(doc);
+    const resourceState = { values: doc.resources.values, lastCalcAt: doc.resources.lastCalcAt };
+    const target = computeStarvationDeadline(this.config, buildings, resourceState, troops, now);
+
+    if (target === null) {
+      if (doc.pendingStarvationEventId == null) {
+        return doc;
+      }
+      await this.eventScheduler.cancelEvent(doc.pendingStarvationEventId, session);
+      const updated = await this.settlementModel.findOneAndUpdate(
+        { _id: doc._id, version: doc.version },
+        {
+          $set: {
+            pendingStarvationEventId: null,
+            pendingStarvationDueAt: null,
+            version: doc.version + 1,
+          },
+        },
+        { session, returnDocument: 'after' },
+      );
+      if (!updated) {
+        throw new VersionConflictError();
+      }
+      return updated;
+    }
+
+    if (
+      doc.pendingStarvationEventId != null &&
+      doc.pendingStarvationDueAt != null &&
+      Math.abs(target - doc.pendingStarvationDueAt) <= STARVATION_RESCHEDULE_EPSILON_MS
+    ) {
+      return doc;
+    }
+
+    if (doc.pendingStarvationEventId != null) {
+      await this.eventScheduler.cancelEvent(doc.pendingStarvationEventId, session);
+    }
+    const event = await this.eventScheduler.scheduleEvent(
+      {
+        type: STARVATION_TICK_EVENT_TYPE,
+        dueAt: target,
+        payload: { settlementId: String(doc._id) },
+      },
+      session,
+    );
+    const updated = await this.settlementModel.findOneAndUpdate(
+      { _id: doc._id, version: doc.version },
+      {
+        $set: {
+          pendingStarvationEventId: event._id,
+          pendingStarvationDueAt: target,
           version: doc.version + 1,
         },
       },
@@ -598,6 +743,11 @@ export class SettlementsService {
   // `private` (only) any more: also called directly by `MovementsService.sendScouts` for the
   // *origin* settlement, which needs the exact same ownership check this class already
   // enforces for every other command — see that method's own comment.
+  //
+  // Also the M3a.6 lazy-scheduling choke point (`docs/M3_DESIGN_DECISIONS.md` §4): every
+  // account command funnels through here, so `ensureStarvationSchedule` runs right after
+  // `settleDoc` on every call — see that method's own comment for the reasoning and for why
+  // it is *not* shared with `settleSettlementDocUnchecked` below.
   async settleSettlementDoc(
     settlementId: string,
     accountId: Types.ObjectId,
@@ -608,7 +758,8 @@ export class SettlementsService {
     if (!doc || !doc.accountId.equals(accountId)) {
       throw new SettlementNotFoundError(settlementId);
     }
-    return this.settleDoc(doc, now, session);
+    const settled = await this.settleDoc(doc, now, session);
+    return this.ensureStarvationSchedule(settled, now, session);
   }
 
   // The ownership-free entry point (M2b.3, "the settle seam"): looks a settlement up by id

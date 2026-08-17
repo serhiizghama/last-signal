@@ -1,11 +1,56 @@
 {
+  "brute": {
+    "name": "Громила"
+  },
+  "torcher": {
+    "name": "Поджигатель"
+  },
   "lookout": {
     "name": "Дозорный"
+  },
+  "biker": {
+    "name": "Байкер"
+  },
+  "ramTruck": {
+    "name": "Таран-грузовик"
+  },
+  "exoTrooper": {
+    "name": "Экзо-боец"
+  },
+  "bulwark": {
+    "name": "Бастион"
   },
   "surveyorDrone": {
     "name": "Дрон-разведчик"
   },
+  "armoredQuad": {
+    "name": "Бронеквадроцикл"
+  },
+  "railSling": {
+    "name": "Рельсомёт"
+  },
+  "skirmisher": {
+    "name": "Застрельщик"
+  },
+  "hunterSniper": {
+    "name": "Охотник-снайпер"
+  },
   "falconer": {
     "name": "Сокольничий"
+  },
+  "duneBuggy": {
+    "name": "Багги"
+  },
+  "ballistaWagon": {
+    "name": "Баллиста-повозка"
+  },
+  "settler": {
+    "name": "Поселенец"
+  },
+  "feralDog": {
+    "name": "Одичавший пёс"
+  },
+  "scavengerGang": {
+    "name": "Банда падальщиков"
   }
 }

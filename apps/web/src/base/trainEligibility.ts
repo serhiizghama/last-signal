@@ -1,5 +1,6 @@
 import type {
   BuildingLevels,
+  BuildingType,
   Faction,
   GameConfig,
   Resources,
@@ -19,17 +20,17 @@ import {
 import { levelOf } from './settlementSelectors';
 
 /**
- * Mirrors the server's `MAX_ACTIVE_TRAINING_ORDERS`
- * (`apps/server/src/settlements/settlements.constants.ts`) — one active training order per
- * settlement at a time (§7, orchestrator decision 1). Not importable across the app boundary
- * (`apps/web` must not depend on `apps/server`); same documented duplication as
- * `BUILD_QUEUE_CAPACITY` in `constants.ts`.
+ * Mirrors the server's `MAX_ACTIVE_ORDERS_PER_BUILDING`
+ * (`apps/server/src/settlements/settlements.constants.ts`) — one active training order *per
+ * training building* (M3 §2, widened from M2b.2's per-settlement cap). Not importable across
+ * the app boundary (`apps/web` must not depend on `apps/server`); same documented duplication
+ * as `BUILD_QUEUE_CAPACITY` in `constants.ts`.
  */
-const MAX_ACTIVE_TRAINING_ORDERS = 1;
+const MAX_ACTIVE_ORDERS_PER_BUILDING = 1;
 
 export type TrainBlockReason =
   | { kind: 'noFaction' }
-  | { kind: 'noBarracks' }
+  | { kind: 'buildingMissing'; building: BuildingType }
   | { kind: 'queueBusy' }
   | { kind: 'wouldStarve' }
   | { kind: 'insufficientResources' };
@@ -49,18 +50,23 @@ export interface TrainEligibility {
 
 /**
  * Whether — and why not — a training order of `count` scouts can be started right now. Mirrors
- * `SettlementsService.trainScouts`'s own validation order for the checks that make sense
- * client-side (faction, Barracks present, one order at a time, the whole-batch Food gate, then
- * affordability against the live resource values — see that method's own comment). The
- * unit-type/count *shape* checks the server also runs (`errors.training.unknownType` /
- * `invalidCount`) are skipped here: unlike the free-form building-type picker, this UI only
- * ever sends the caller's own faction scout and a count the count-picker already keeps at
- * `>= 1`, so there is nothing left for the player to get wrong before submitting.
+ * `SettlementsService.trainUnits`'s own validation order for the checks that make sense
+ * client-side (faction, the training building present, one order at a time *at that
+ * building*, the whole-batch Food gate, then affordability against the live resource values —
+ * see that method's own comment). The unit-type/count *shape* checks the server also runs
+ * (`errors.training.unknownType` / `invalidCount`) are skipped here: unlike the free-form
+ * building-type picker, this UI only ever sends the caller's own faction scout and a count the
+ * count-picker already keeps at `>= 1`, so there is nothing left for the player to get wrong
+ * before submitting.
+ *
+ * Deliberately still scout-only (M3e boundary, not an oversight): the server's `trainUnits`
+ * already accepts the whole roster, but the Barracks card only ever offers its faction's own
+ * scout until the full Units tab ships — see `TrainingSection`'s own comment.
  */
 export function computeTrainEligibility(
   config: GameConfig,
   buildings: BuildingLevels,
-  trainingQueueLength: number,
+  trainingQueue: ReadonlyArray<{ unitType: string }>,
   troops: TroopCounts,
   liveValues: Resources,
   faction: Faction | undefined,
@@ -79,21 +85,45 @@ export function computeTrainEligibility(
 
   const unitType = scoutUnitForFaction(config, faction).type;
   const cost = calcTrainCost(config, unitType, count);
-  const unitTimeMs = calcTrainTimeMs(config, unitType);
-  const batchTimeMs = calcTrainBatchTimeMs(config, unitType, count);
+  // Every scout trains at the Barracks (`UnitDef.trainedIn`) — derived rather than hardcoded
+  // so this stays correct if that ever changes, and so it reads exactly like the server's own
+  // check 5 (`this.config.units[unitType].trainedIn`).
+  const building = config.units[unitType].trainedIn as BuildingType;
+  const buildingLevel = levelOf(buildings, building);
 
-  if (levelOf(buildings, 'barracks') < 1) {
+  // `calcTrainTimeMs`/`calcTrainBatchTimeMs` now take the training building's level and
+  // throw below level 1, and a missing building means that level is legitimately 0 here — so
+  // the time formulas can't be called with `buildingLevel` directly in the missing-building
+  // case. But zeroing the preview (the `noFaction` branch's convention) is wrong for this
+  // branch: unlike "no faction", where there is no unit to preview at all, a player without
+  // the building still needs to see what training will cost them once they build it, and a
+  // freshly-built building *is* level 1 — so previewing at `Math.max(1, buildingLevel)` shows
+  // the real number the player will get, not a placeholder. It also means this line changes
+  // nothing about the numbers shown pre-M3a.2: `0.91 ** 0 === 1`, so level 1 reproduces the
+  // old (pre-building-level) time byte for byte.
+  const previewLevel = Math.max(1, buildingLevel);
+  const unitTimeMs = calcTrainTimeMs(config, unitType, previewLevel);
+  const batchTimeMs = calcTrainBatchTimeMs(config, unitType, count, previewLevel);
+
+  if (buildingLevel < 1) {
     return {
       unitType,
       cost,
       unitTimeMs,
       batchTimeMs,
       canStart: false,
-      block: { kind: 'noBarracks' },
+      block: { kind: 'buildingMissing', building },
     };
   }
 
-  if (trainingQueueLength >= MAX_ACTIVE_TRAINING_ORDERS) {
+  // Per-building queue cap (M3 §2): only orders training *at this same building* count
+  // against it, otherwise a legitimately-parallel order at another training building would
+  // wrongly grey this one out. Mirrors the server's own check 7
+  // (`config.units[item.unitType].trainedIn === building`).
+  const ordersAtThisBuilding = trainingQueue.filter(
+    (item) => config.units[item.unitType as UnitType].trainedIn === building,
+  ).length;
+  if (ordersAtThisBuilding >= MAX_ACTIVE_ORDERS_PER_BUILDING) {
     return {
       unitType,
       cost,

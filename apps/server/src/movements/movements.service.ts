@@ -1,5 +1,10 @@
 import type { GameConfig, TroopCounts } from '@last-signal/game-core';
-import { chebyshevDistance, slowestTroopSpeed, travelTimeMs } from '@last-signal/game-core';
+import {
+  chebyshevDistance,
+  slowestTroopSpeed,
+  travelTimeMs,
+  unionTroops,
+} from '@last-signal/game-core';
 import { Inject, Injectable } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import type { ClientSession, Connection, Model } from 'mongoose';
@@ -32,7 +37,7 @@ import { toMovementView } from './movements.view';
 
 // Implements the `sendScouts`/`cancelMovement`/`listMine` command flow end to end (M2b.3,
 // `docs/M2_DESIGN_DECISIONS.md` §6), following the concurrency playbook's recipe verbatim —
-// see `docs/CONCURRENCY_PLAYBOOK.md` and `SettlementsService.startBuild`/`.trainScouts` for
+// see `docs/CONCURRENCY_PLAYBOOK.md` and `SettlementsService.startBuild`/`.trainUnits` for
 // the reference shape this mirrors.
 @Injectable()
 export class MovementsService {
@@ -56,7 +61,7 @@ export class MovementsService {
   // cheapest, state-independent shape checks (empty list, malformed counts); then
   // normalization (strip zero counts, merge duplicate types) *before* the checks that need
   // the normalized list (unit identity, then troop availability, which needs `settled.troops`
-  // and so is deliberately last among the unit-list checks — mirrors `trainScouts`'s own
+  // and so is deliberately last among the unit-list checks — mirrors `trainUnits`'s own
   // "affordability last" ordering); target resolution last of all, since it's the only check
   // that needs a second collection read.
   async sendScouts(
@@ -166,6 +171,13 @@ export class MovementsService {
         })
         .filter((t) => t.count > 0);
 
+      // ...and credit the exact same units into `awayTroops` (M3a.4, §3): they leave
+      // `troops` and become "in transit", which still eats this settlement's Food
+      // (`upkeepTroopsOf`) — the fix for the pre-M3 exploit where marching an army out
+      // silently dropped its upkeep to zero. One write, same version guard, same
+      // transaction as everything else below.
+      const newAwayTroops = unionTroops(toTroopCounts(origin.awayTroops), merged as TroopCounts);
+
       // Pre-generated so the `movementArrive` event's payload can reference the movement by
       // id before the movement document itself is inserted — mirrors `startBuild`'s
       // `queueItemId = randomUUID()` pattern, just with a real `ObjectId` since `movements`
@@ -207,7 +219,7 @@ export class MovementsService {
 
       const updatedOrigin = await this.settlementModel.findOneAndUpdate(
         { _id: origin._id, version: origin.version },
-        { $set: { troops: newTroops, version: origin.version + 1 } },
+        { $set: { troops: newTroops, awayTroops: newAwayTroops, version: origin.version + 1 } },
         { session },
       );
       if (!updatedOrigin) {
@@ -218,6 +230,10 @@ export class MovementsService {
     });
   }
 
+  // No `awayTroops` change needed here (M3a.4, §3): a recalled movement is still in transit
+  // — it just turns around — so it keeps eating this settlement's Food exactly as it did a
+  // moment ago. `awayTroops` only changes when units actually leave transit: home (return),
+  // dead (arrival losses/wipe), or eventually hosted elsewhere (support, M3c).
   async cancelMovement(
     movementId: string,
     accountId: Types.ObjectId,

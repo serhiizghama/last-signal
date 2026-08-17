@@ -34,9 +34,10 @@ export class BuildCommandError extends HttpException {
   }
 }
 
-// Every rejected `trainScouts` command (unknown/foreign unit type, no faction, invalid
-// count, no Barracks, the one-active-order cap, the Food gate, affordability) — one class,
-// key + params + status supplied at the call site, mirroring `BuildCommandError`.
+// Every rejected `trainUnits` command (unknown/untrainable unit type, no faction, invalid
+// count, the training building missing, the one-active-order-per-building cap, the Food
+// gate, affordability) — one class, key + params + status supplied at the call site,
+// mirroring `BuildCommandError`.
 export class TrainCommandError extends HttpException {
   constructor(
     key: string,

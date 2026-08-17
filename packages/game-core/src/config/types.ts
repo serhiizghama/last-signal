@@ -78,19 +78,51 @@ export const FACTIONS = ['raiders', 'engineers', 'nomads'] as const;
 export type Faction = (typeof FACTIONS)[number];
 
 /**
- * All unit types shipped so far: the three faction scouts only (M2 §7). The other 12 units
- * (infantry, cavalry, siege, etc.) land in M3.
+ * The full unit roster (M3 §1): the three faction scouts shipped in M2, widened to all 18
+ * types — offence infantry, defence infantry, fast (cavalry analog) and siege for each of the
+ * three factions, plus the faction-neutral Settler and two wildlife oasis-defender types.
+ * Order is stable (relied on for deterministic iteration) and follows the design record's
+ * table order: grouped by faction, then the neutral Settler, then wildlife.
  */
-export const UNIT_TYPES = ['lookout', 'surveyorDrone', 'falconer'] as const;
+export const UNIT_TYPES = [
+  'brute',
+  'torcher',
+  'lookout',
+  'biker',
+  'ramTruck',
+  'exoTrooper',
+  'bulwark',
+  'surveyorDrone',
+  'armoredQuad',
+  'railSling',
+  'skirmisher',
+  'hunterSniper',
+  'falconer',
+  'duneBuggy',
+  'ballistaWagon',
+  'settler',
+  'feralDog',
+  'scavengerGang',
+] as const;
 
 export type UnitType = (typeof UNIT_TYPES)[number];
 
-/** A unit's gameplay role. Only `'scout'` exists until M3 adds the rest of the roster. */
-export type UnitRole = 'scout';
+/** A unit's gameplay role (M3 §1 widens this from the M2 scout-only union). */
+export type UnitRole =
+  'offenseInfantry' | 'defenseInfantry' | 'fast' | 'scout' | 'siege' | 'settler' | 'wildlife';
 
 export interface UnitDef {
   type: UnitType;
-  faction: Faction;
+  /**
+   * `Faction | null` (M3 §1): `null` marks a unit no account can train *by faction lock* —
+   * the two wildlife types (no training path at all, see `trainedIn` below) and the Settler
+   * (trainable by every faction, so it has no single faction to lock to). Overloading
+   * `faction` with a third "any faction" sentinel would need a state beyond the design
+   * record's fixed `Faction | null` union; `trainedIn` already carries the "who can train
+   * this" information precisely, so the faction-lock rule reads naturally as "a unit with a
+   * `faction` must match yours; a trainable unit without one is open to everybody".
+   */
+  faction: Faction | null;
   role: UnitRole;
   /** Cost to train one unit, at classic x1 (§7). */
   cost: Resources;
@@ -98,10 +130,42 @@ export interface UnitDef {
   baseTrainTimeSec: number;
   /** Fields per hour at classic x1, before `speed.travel` (see `travelTimeMs`, M2 §0). */
   speed: number;
+  /** Regular battle attack points (M3 §0, §5); 0 for scouts (barred from raid/assault armies). */
+  attack: number;
+  /** Regular battle defence points against an attacker's infantry-split attack (M3 §0, §5). */
+  defInfantry: number;
+  /** Regular battle defence points against an attacker's cavalry-split attack (M3 §0, §5). */
+  defCavalry: number;
+  /** Loot capacity per surviving unit on a raid/assault (M3 §6); 0 for units that never loot. */
+  carry: number;
+  /**
+   * Which side of the defender's infantry/cavalry split this unit's *attack* counts toward
+   * when it is the attacker (M3 §5 step 1). Only the three `fast` units are `'cavalry'`.
+   */
+  splitClass: 'infantry' | 'cavalry';
+  /**
+   * Scout-vs-scout attack/defense points (M2 §8) — a separate system from `attack`/
+   * `defInfantry`/`defCavalry` above, kept required (not optional) and 0 for every non-scout
+   * unit rather than undefined. `calcTroopScoutAttack`/`calcTroopScoutDefense` sum over a
+   * whole troop list, and a settlement's home garrison now mixes combat units with scouts;
+   * 0 keeps those functions total *and* keeps M2's shipped scout-vs-scout maths
+   * bit-identical — only scouts contribute to scout combat, exactly as before. A non-zero
+   * value here would silently change a shipped system.
+   */
   scoutAttack: number;
   scoutDefense: number;
   /** Hourly Food upkeep of one unit of this type, from the moment it is credited (§7). */
   foodUpkeepPerHour: number;
+  /**
+   * The building that trains this unit (M3 §2). Absent for the two wildlife types — the
+   * field, not `faction`, is what actually decides trainability (see the `faction` comment
+   * above): the Settler has `faction: null` but a real `trainedIn` and is trainable by all.
+   */
+  trainedIn?: BuildingType;
+  /** Wall damage dealt per surviving siege unit on an assault (M3 §7); siege units only. */
+  wallDamage?: number;
+  /** Building damage dealt per surviving siege unit on an assault (M3 §7); siege units only. */
+  buildingDamage?: number;
 }
 
 export interface GameConfig {
@@ -142,13 +206,32 @@ export interface GameConfig {
     maxSettlements: number;
   };
   buildings: Record<BuildingType, BuildingDef>;
-  /** The unit catalogue (M2 §7): the three faction scouts today, the full roster in M3. */
+  /** The unit catalogue (M2 §7, widened to the full 18-type roster in M3 §1). */
   units: Record<UnitType, UnitDef>;
-  /** Scout-vs-scout combat loss curve and intel-tier gating (M2 §8). */
+  /** Scout-vs-scout intel-tier gating (M2 §8); the shared loss curve now lives in `combat`. */
   scouting: ScoutingConfig;
+  /** Regular-battle tuning shared by every combat resolution (M3 §0, §5). */
+  combat: CombatConfig;
   /** Movement send/cancel tuning (M2 §6). */
   movement: MovementConfig;
+  /** Per-building-level training-time tuning (M3 §2). */
+  training: TrainingConfig;
   map: MapConfig;
+}
+
+/**
+ * Training-time tuning (M3 §2, `docs/M3_DESIGN_DECISIONS.md`). Added in M3a.2 so Barracks
+ * (and the other training buildings) levels stop being dead weight once training is no
+ * longer scout-only.
+ */
+export interface TrainingConfig {
+  /**
+   * Per-level training-time multiplier, mirroring the Command Center's `buildTimeRatio`
+   * shape (`calcBuildTimeMs`): `timeFactor = buildingTimeRatio ** (level - 1)`. Draft 0.91 ->
+   * a level-20 training building is `1 / 0.91^19 = 6.0x` faster than level 1. A number,
+   * sweepable by `tools/sim` in M4 like everything else in this file.
+   */
+  buildingTimeRatio: number;
 }
 
 /** Movement (currently: scout) send/cancel tuning (M2 §6). */
@@ -161,18 +244,28 @@ export interface MovementConfig {
   cancelWindowMs: number;
 }
 
-/** Scout resolution tuning: the casualty curve and the Radio Tower intel-tier gate (M2 §8). */
+/**
+ * Scout resolution tuning: the Radio Tower intel-tier gate (M2 §8). `lossExponent` used to
+ * live here but was promoted to the shared `combat.lossExponent` in M3 §5 — one curve family
+ * for the whole game, so a player who has learned to read scout losses can read battle losses
+ * too. Scout-vs-scout resolution (`scouting/combat.ts`) now reads `config.combat.lossExponent`.
+ */
 export interface ScoutingConfig {
-  /**
-   * Exponent of the Kirilloid-style casualty curve:
-   * `lossFraction = min(1, (defPts / atkPts) ** lossExponent)`. Draft 1.5.
-   */
-  lossExponent: number;
   /**
    * Minimum Radio Tower level differential (`attackerTower - defenderTower`) at which the
    * `'buildings'` intel tier unlocks; below it, intel stays at `'base'`. Draft 1.
    */
   buildingsTierMinDiff: number;
+}
+
+/** Regular-battle tuning shared across every combat resolution (M3 §0, §5). */
+export interface CombatConfig {
+  /**
+   * Exponent of the Kirilloid-style casualty curve, shared with scout-vs-scout resolution:
+   * `x = min(1, (defPts / atkPts) ** lossExponent)`. Draft 1.5 — the same constant M2 §8
+   * already shipped for scouts, promoted here rather than duplicated (M3 §5).
+   */
+  lossExponent: number;
 }
 
 /**

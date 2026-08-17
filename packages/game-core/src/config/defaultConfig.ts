@@ -8,9 +8,14 @@ import type { GameConfig } from './types.js';
  * argument so sweeping these values never requires editing source.
  */
 export const DEFAULT_CONFIG: GameConfig = {
-  // Bumped in M2b.3: the `movement` block (cancel window, §6) was added — past seasons
-  // archived under configVersion 5 keep their original (movement-less) shape.
-  configVersion: 6,
+  // Bumped in M3a.1 (M3 §5, §19.3): the unit roster widened to 18 types and the `combat`
+  // block was added. configVersion policy for the rest of M3 (orchestrator decision): the
+  // whole of M3 lands under configVersion 7 — later M3 steps add more blocks
+  // (combat.randomFactor, wall, hiddenCache, siege, training, protection, market, …)
+  // without bumping again, since M3 is unreleased and the field's purpose is letting an
+  // *archived season* stay interpretable, not tracking in-development edits. Past seasons
+  // archived under configVersion 6 keep their original (pre-M3, movement-only) shape.
+  configVersion: 7,
   // travel pinned at 2 (down from 2.5) in M2 §0 so the travel-time contract table is
   // concrete; the knob stays sweepable by tools/sim.
   speed: { build: 5, production: 5, training: 5, travel: 2 },
@@ -47,18 +52,34 @@ export const DEFAULT_CONFIG: GameConfig = {
   },
   buildings: BUILDINGS,
   units: UNITS,
-  // Added in M2b.1 (§8 of the M2 design record): the scout-vs-scout casualty curve exponent
-  // and the Radio Tower differential that unlocks the buildings intel tier. Both draft numbers,
-  // sweepable by tools/sim like everything else in this file.
+  // Added in M2b.1 (§8 of the M2 design record): the Radio Tower differential that unlocks
+  // the buildings intel tier. Draft number, sweepable by tools/sim like everything else in
+  // this file. `lossExponent` used to live here too — moved to `combat` below in M3a.1.
   scouting: {
-    lossExponent: 1.5,
     buildingsTierMinDiff: 1,
+  },
+  // Added in M3a.1 (§0, §5 of the M3 design record): the shared casualty-curve exponent,
+  // promoted out of `scouting` so scout-vs-scout and regular battle resolution read one
+  // constant — a player who has learned to read scout losses can read battle losses too.
+  // Same value (1.5) M2 §8 already shipped for scouts; `scouting/combat.ts` now reads this
+  // field instead of `scouting.lossExponent`, with identical behaviour.
+  combat: {
+    lossExponent: 1.5,
   },
   // Added in M2b.3 (§6 of the M2 design record): the window after send during which a
   // movement can still be cancelled. 90s is the Kirilloid/T4 recall-window draft; a number,
   // sweepable by tools/sim like everything else in this file.
   movement: {
     cancelWindowMs: 90_000,
+  },
+  // Added in M3a.2 (§2 of the M3 design record): training time now scales with the training
+  // building's level — the reason Barracks levels stop being dead weight. Same shape as the
+  // Command Center's build-time divisor (`commandCenter.buildTimeRatio`), the same config
+  // style: `timeFactor = training.buildingTimeRatio ** (level - 1)`. Draft 0.91 -> a level-20
+  // Barracks trains 6.0x faster than level 1 (`0.91^19 = 0.1666`). A draft number, sweepable
+  // by tools/sim in M4 like everything else in this file.
+  training: {
+    buildingTimeRatio: 0.91,
   },
   // Added in M2a.1 (§1, §2, §3 of the M2 design record): map geometry, derived terrain,
   // farm oases and the center-out expanding spawn policy. All draft numbers, sweepable by

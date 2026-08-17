@@ -25,7 +25,7 @@ Solo pet project, portfolio-grade quality. No monetization, ever.
 | Victory | King-of-the-hill over the Signal Source: both sides accumulate hold-time toward their goal; first to target wins, else larger accumulation at round end |
 | PvP | Full PvP (anyone can attack anyone, incl. own side). Raids + building destruction. **No village capture in v1** |
 | NPCs | Full game accounts, indistinguishable from humans, play by identical rules via the same service layer. Behavior profiles + scheduled ticks |
-| Content scope | 13 building types, 5 units per faction |
+| Content scope | 13 building types, 5 units per faction + a faction-neutral Settler and two wildlife defender types (16 trainable unit types in total; the two wildlife types are never trainable — see `docs/M3_DESIGN_DECISIONS.md` §1) |
 | Stack | TypeScript monorepo: NestJS backend + React/Vite frontend + shared `game-core` package |
 | Database | MongoDB 7+ (single-node replica set; **multi-document transactions available and used**). Custom event scheduler collection, no Agenda/Redis |
 | Auth | Telegram Login (+ guest login in dev mode only) |
@@ -70,6 +70,11 @@ Units per faction (5 roles each — stats live in `game-core` constants, tuned v
 | Scout | Lookout | Surveyor Drone | Falconer |
 | Siege | Ram Truck | Rail Sling | Ballista Wagon |
 
+Plus a 16th unit shared by all three factions: the **Settler**, trained at the **Command
+Center** (not the Barracks — that is exactly why it lives there), consumed three at a time
+to found a new settlement. Farm oases are held by two **wildlife** defender types (Feral
+Dog, Scavenger Gang) that no account can train. Full stats: `docs/M3_DESIGN_DECISIONS.md` §1.
+
 ### 2.3 Resources & economy
 
 - Four resources with distinct roles: **Scrap** (mass/structures), **Fuel** (vehicles &
@@ -86,22 +91,27 @@ Units per faction (5 roles each — stats live in `game-core` constants, tuned v
   Nothing ticks in the background.
 - Warehouse caps Scrap/Fuel/Electronics **per resource** (cap N = N of each); Cold
   Storage caps Food. Production halts at cap (nothing is wasted retroactively).
-- Market: player-to-player and player-to-NPC trades at limited exchange ratios; merchants
-  travel on the map like armies.
+- Market (M3, both halves): **player↔player offers** at limited exchange ratios (an offer
+  must stay inside a 1:2 weighted-value band), and a faceless **world exchange post** that
+  converts one resource into another at a fixed weighted rate with a spread — it cannot
+  print value, so it needs no cap or cooldown. No named NPC counterparties before M4.
+  **Merchants are not trained units**: a settlement's merchant count is derived from its
+  Market level, and merchants travel on the map like armies (capacity and speed are
+  faction-flavoured). Detail: `docs/M3_DESIGN_DECISIONS.md` §14.
 
 ### 2.4 Buildings (13 types)
 
 | Building | Purpose |
 |---|---|
-| Command Center | Build speed; prerequisite hub (HQ) |
+| Command Center | Build speed; prerequisite hub (HQ); trains Settlers |
 | Scrap Yard | Scrap production |
 | Fuel Refinery | Fuel production |
 | Electronics Workshop | Electronics production |
 | Greenhouse Farm | Food production |
 | Warehouse | Scrap/Fuel/Electronics storage cap |
 | Cold Storage | Food storage cap |
-| Barracks | Trains infantry & scouts |
-| Machine Shop | Trains vehicles (fast + siege units) |
+| Barracks | Trains infantry & scouts; level reduces training time |
+| Machine Shop | Trains vehicles (fast + siege units); level reduces training time |
 | Wall | Defense bonus; must be breached by siege |
 | Market | Trading, merchants |
 | Radio Tower | Scouting ops, intel level, incoming-attack visibility detail |
@@ -134,25 +144,57 @@ per account per round in v1.
   placement algorithm, the reveal event and what the tile blocks are owned by M5; until
   then `world.source` is null and the map centre is ordinary, settleable terrain.
 - **Farm oases**: NPC-held surviving farms scattered on the map — raid targets with
-  Food loot (not annexable in v1). Placed at world generation; defenders, loot and
-  raiding arrive with combat (M3).
+  Food loot (**not annexable in v1**, no ownership, no bonus to a nearby settlement).
+  Placed at world generation, inert in M2. From **M3** each oasis carries **wildlife
+  defenders** (composition derived deterministically from the world seed and the oasis
+  coordinates) and a **Food pool that regenerates lazily**, and can be raided, assaulted
+  and scouted (M3 record §10).
 - **Spawn — one policy for everyone:** a settlement is placed at random inside an annulus
   of Chebyshev radius that expands from the centre outwards as the world fills
   (Travian-style ring growth). NPCs are seeded through this same policy first, at world
   start, so humans registering later land in the outer band as an emergent property
   rather than a special rule.
 - Travel time = distance / unit speed (slowest unit in the army), ~2–4 h across half
-  the map for average units.
+  the map for average units. **Siege units (speed 3–4) sit deliberately outside that
+  band** — 3 h 45 m – 5 h across half the map — because slow siege is what makes an
+  assault a planned operation rather than an impulse. This is an explicit extension of the
+  M2 §0 travel contract, not a violation of it (M3 record §0, bound 4).
 
 ### 2.6 Combat
 
-Adapted classic Travian battle system (public Kirilloid formulas as the base), simplified:
+Adapted classic Travian battle system (public Kirilloid formulas as the base), simplified.
+The model below is **resolved** in `docs/M3_DESIGN_DECISIONS.md` §5–§7, which wins over
+this section for M3 scope:
 
-- Army offense points vs defender defense points (infantry/vehicle split), wall bonus,
-  random factor ±(small). Losses distributed proportionally.
-- Attack types: **Raid** (partial engagement, loot up to carry capacity) and
-  **Assault** (full battle; with siege units — destroys targeted building levels; Wall
-  must fall first).
+- **Points vs points, T3.6 shape.** `atkPts = Σ (attack × count)` over the arriving army;
+  `defPts` = the defenders' infantry/cavalry defence weighted by the *attacker's own*
+  infantry/cavalry attack split, summed over every defending contingent (the target's own
+  home troops plus every stationed support contingent — troops that are away do not
+  defend). No morale, no bash points.
+- **The Wall is a multiplier** on `defPts` (`ratioPerLevel ** wallLevel`), no flat bonus,
+  no per-faction wall.
+- **A deterministic ±5 % roll** on `atkPts`, derived from `hash(world.seed, movementId)` —
+  **never a wall-clock random**: battle resolution runs inside a replay-safe scheduler
+  handler and inside `tools/sim`, so a crash-replay must produce the battle the report
+  already described.
+- **One shared casualty curve for the whole game**: `x = min(1, (defPts/atkPts) ** 1.5)` —
+  the same constant and curve family already shipped for scout-vs-scout in M2, promoted to
+  `config.combat.lossExponent`. Losses round to the nearest whole unit and are distributed
+  proportionally across unit types; defender losses are split across contingents
+  proportionally to each contingent's contribution to `defPts`.
+- Attack types differ in exactly three things — casualties, siege, and whether the wall
+  must fall: **Raid** (attacker loses `x/(1+x)`, defender loses `1/(1+x)`, no siege units
+  allowed — a genuinely partial engagement) and **Assault** (attacker loses `x`, defender
+  loses everything, siege pass runs). Both loot up to surviving carry capacity.
+- **Loot** = `Σ (carry × surviving count)`, taken from what the Hidden Cache does not
+  protect (`base × ratio ** (level − 1)`, **per resource**), distributed proportionally to
+  availability so a raider cannot cherry-pick Electronics. Loot rides home on the movement
+  and is credited on return, clamped to the attacker's storage caps.
+- **Siege pass (assault only):** the **Wall is always breached first**; only once it is at
+  0 do building-damage points go to the named target building. Knocking one level off level
+  `L` costs `base × ratio ** (L − 1)` points; leftovers are discarded, never carried over.
+- **No razing, no capture.** Every building can be knocked to 0 and rebuilt, but the
+  **Command Center floors at level 1** — a settlement always survives.
 - Scouting: scout-vs-scout resolution; report shows resources, troops, buildings
   depending on Radio Tower differential. Resolved detail (M2 record §8): attacker
   losses follow a 1.5-power casualty curve `min(1, (defPts/atkPts)^1.5)`, defender
@@ -161,9 +203,20 @@ Adapted classic Travian battle system (public Kirilloid formulas as the base), s
   building list; the defender gets a counter-report only if they had a scout at home;
   a mission that loses every scout still returns an empty "no survivors" report
   (deliberate deviation from Travian, which returns nothing).
-- Defenders can station support troops in other settlements (own or anyone's).
-- **Beginner protection: 72 h** (no incoming attacks; ends early if the player attacks).
-- Battle reports for both parties; Telegram push for incoming attacks.
+- Defenders can station support troops in other settlements (own or anyone's). Stationed
+  troops defend every battle at the host and are **fed by the host settlement**; either
+  side can end the arrangement instantly — the owner recalls, or the host evicts.
+- **Beginner protection: 72 h** from the moment the account's first settlement is created.
+  It blocks **all** foreign movements at that account's settlements — raid, assault,
+  **scouting** and support alike — and ends early **only** on the protected account's own
+  first raid or assault against another account. Scouting somebody, and raiding an **oasis**,
+  do *not* break it: the onboarding loop is "train a scout, send it", and a rule that
+  strips protection for following the tutorial is a trap (M3 record §11).
+- Battle reports for both parties, plus a loss report to every supporter who lost units.
+- **Notifications** (M3 record §16): an outbox written in the same transaction as the event
+  that caused it, drained through a `NotificationProvider` interface. In-app/WS provider
+  live from M3; the real Telegram bot is wired and smoke-tested on the VPS before M7 —
+  the same treatment Telegram *auth* already has.
 
 ### 2.7 Round structure — three acts
 
@@ -236,13 +289,22 @@ stay idempotent and re-check state — transactions don't replace crash-safety.
 
 Collections:
 
-- `accounts` — tgId, name, faction, side, sideChangedAt, contribution, medals, settings
+- `accounts` — tgId, name, faction, side, sideChangedAt, contribution, medals, settings;
+  `protectedUntil` (beginner protection, M3)
 - `settlements` — accountId, x, y, buildings[{type, level}], resources snapshot
-  (`{values, lastCalcAt}`), buildQueue, troops (home + stationed), influence
+  (`{values, lastCalcAt}`), buildQueue, trainingQueue, influence, and **three** troop
+  lists (M3): `troops` (own, at home), `awayTroops` (own, in transit) and
+  `stationedTroops` (foreign support, tagged with owner and origin). Food upkeep is the
+  **union of all three**, which is what keeps a marching army from being free
 - `movements` — from, to, type (raid/assault/scout/support/settle/trade), units,
-  departAt, arriveAt, status, survivors; processed by the scheduler at `arriveAt`
-- `oases` — farm oases placed at world generation (`{x, y, type}`; defenders and loot
-  from M3)
+  departAt, arriveAt, status, survivors, loot; processed by the scheduler at `arriveAt`
+- `oases` — farm oases placed at world generation (`{x, y, type}`); from M3 also
+  `defenders`, `loot`, `lastRegenAt`, `version`, all accruing lazily like settlement
+  resources
+- `tradeOffers` (M3) — `{accountId, fromSettlementId, give, want, merchantsNeeded,
+  createdAt, expiresAt}`; the offered resources are deducted at creation
+- `notifications` (M3) — outbox `{accountId, kind, payload, createdAt, deliveredAt,
+  provider}`, written in the same transaction as the event that caused it
 - `events` — `{type, dueAt, payload, status}`, index `{status, dueAt}`; the single
   source of "things that happen at a moment in time" (arrivals, build completions,
   NPC ticks, act transitions, starvation checks)
@@ -336,13 +398,35 @@ reports, and Influence displayed on the base screen. All design inputs are fixed
 `docs/M2_DESIGN_DECISIONS.md`; the M2a/M2b/M2c split lives in its §13. *Accept: scout
 another settlement from the map and read the report.*
 
-**M3 — Combat.** Battle engine in game-core (raid/assault, wall, siege destruction,
-carry capacity, starvation), training of the remaining 12 units (scouts shipped in M2),
-support stationing, settler convoys + Influence-gated founding, Market/trade with
-merchants, oasis defenders/loot/scouting, incoming-movement visibility (with Radio Tower
-controlling detail), beginner protection (covers scouting as well as attacks), battle
-reports UI, Telegram notifications. *Accept: two test accounts fight; results match
-hand-computed formula cases; TG push received.*
+**M3 — Combat, expansion & trade**, split into five sub-milestones (all design inputs are
+fixed in `docs/M3_DESIGN_DECISIONS.md`; the M3a–M3e split with per-step acceptance criteria
+lives in its §20):
+
+- **M3a — Roster, training & upkeep.** The remaining 12 units + the faction-neutral
+  **Settler** + two wildlife defender types (scouts shipped in M2), training generalized to
+  three buildings with the training-building level reducing training time, the
+  `troops`/`awayTroops`/`stationedTroops` split that makes **in-flight troops eat Food**,
+  **starvation** (hourly tick, weakest first, guests before hosts), NPC seeder bands
+  extended with real defenders and Hidden Cache levels.
+- **M3b — The battle engine (pure, `game-core` only).** Raid/assault resolution, wall
+  multiplier, deterministic roll, loot distribution behind the Hidden Cache, the siege pass
+  and its resistance curve.
+- **M3c — Attack, support & oases (server).** `raid`/`assault`/`support` movements and
+  their arrival resolvers, two-document arrival transactions, loot on the return leg, siege
+  application with the Command Center floor, support recall/evict, oasis live state with
+  lazy regeneration, oasis raiding and scouting, beginner protection, incoming-movement
+  visibility gated by Radio Tower level.
+- **M3d — Founding & the Market.** Settler training, the `settle` movement with the
+  Influence gate checked twice, `tradeOffers` with the 1:2 ratio cap, and the **world
+  exchange post** with its spread.
+- **M3e — UI, reports & notifications.** Units tab, attack flow, incoming panel, combat
+  reports, Market tab, settle action, protection badges, the **notification layer**
+  (outbox + provider interface, in-app provider live, Telegram provider a logging stub),
+  the change-stream resume fix, RU i18n for all of it.
+
+*Accept: two test accounts fight end to end in a real browser; results match hand-computed
+formula cases; an in-app notification fires and the Telegram provider logs the identical
+payload* (the real bot is smoke-tested before M7 — M3 record §16).
 
 **M4 — NPCs.** Profiles (Settler/Marauder), tick scheduling, world seeded with ~135
 NPCs, sim harness runs 21 days headless, first balance pass. *Accept: sim report looks

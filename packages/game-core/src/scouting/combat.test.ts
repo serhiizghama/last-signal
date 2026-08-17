@@ -7,7 +7,7 @@ import { resolveScoutCombat } from './combat.js';
 const config = DEFAULT_CONFIG;
 
 function withLossExponent(base: GameConfig, lossExponent: number): GameConfig {
-  return { ...base, scouting: { ...base.scouting, lossExponent } };
+  return { ...base, combat: { ...base.combat, lossExponent } };
 }
 
 describe('resolveScoutCombat', () => {
@@ -86,7 +86,7 @@ describe('resolveScoutCombat', () => {
   it('rounds a .5 boundary the documented way (Math.round, ties round up)', () => {
     const boundaryConfig: GameConfig = {
       ...config,
-      scouting: { ...config.scouting, lossExponent: 1 },
+      combat: { ...config.combat, lossExponent: 1 },
       units: {
         ...config.units,
         lookout: { ...config.units.lookout, scoutAttack: 10 },

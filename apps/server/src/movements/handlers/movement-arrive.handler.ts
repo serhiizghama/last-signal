@@ -1,6 +1,6 @@
 import type { GameConfig } from '@last-signal/game-core';
 import { calcStorageCaps, resolveScouting } from '@last-signal/game-core';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { ClientSession, Model } from 'mongoose';
 
@@ -26,7 +26,12 @@ import {
   toTroopCounts,
 } from '../../settlements/settlements.util';
 import { MOVEMENT_ARRIVE_EVENT_TYPE, MOVEMENT_RETURN_EVENT_TYPE } from '../movements.constants';
-import { computeReturnAt, toPlainResourceValues, toPlainUnitCounts } from '../movements.util';
+import {
+  computeReturnAt,
+  subtractUnitCounts,
+  toPlainResourceValues,
+  toPlainUnitCounts,
+} from '../movements.util';
 
 interface MovementArrivePayload {
   movementId: string;
@@ -50,6 +55,11 @@ interface MovementArrivePayload {
 export class MovementArriveHandler implements EventHandler {
   readonly type = MOVEMENT_ARRIVE_EVENT_TYPE;
   readonly supportedPayloadVersions = [1];
+
+  // Same pattern as `SchedulerService`'s own logger — the diagnostic surface for
+  // `subtractUnitCounts`'s `shortfall` below (see that function's comment for why it clamps
+  // rather than throws).
+  private readonly logger = new Logger(MovementArriveHandler.name);
 
   constructor(
     @InjectModel(Movement.name) private readonly movementModel: Model<MovementDocument>,
@@ -105,6 +115,13 @@ export class MovementArriveHandler implements EventHandler {
 
     const result = resolveScouting(this.config, {
       attackers: toTroopCounts(movement.units),
+      // Deliberately `troops` alone, not `upkeepTroopsOf` — scout-vs-scout resolution is
+      // defended by scouts physically at home (§8's model, unchanged by M3a.4). Future
+      // obligation, recorded here rather than guessed at: design record §8 says stationed
+      // scouts must also count for the host's scout defence and for detection, so M3c must
+      // widen this to include `targetDoc.stationedTroops` once the `support` movement can
+      // actually populate it — mirrors how `sendScouts`'s role check records "so M3's dozen
+      // non-scout unit types don't silently become sendable" for its own future obligation.
       defenderHomeTroops: toTroopCounts(targetDoc.troops),
       attackerRadioTowerLevel: currentLevelOf(attackerBuildings, 'radioTower'),
       defenderRadioTowerLevel: currentLevelOf(defenderBuildings, 'radioTower'),
@@ -166,6 +183,36 @@ export class MovementArriveHandler implements EventHandler {
       // Total wipe (§8): the movement ends here, `done` — no `movementReturn` to schedule,
       // nobody is coming home. The defender's troops are never touched either way (defender
       // scouts never die on defence — see `resolveScoutCombat`'s own comment).
+      //
+      // Every unit the army left home with leaves `awayTroops` for good (M3a.4, §3): they
+      // are dead, not delayed, so nothing is left "in transit" for this settlement to keep
+      // paying Food for. Uses `movement.units` (the whole original army), not `losses` —
+      // there is no partial survival in this branch by definition. A non-empty `shortfall`
+      // means `awayTroops` had already drifted (e.g. a movement sent before this step
+      // existed) — logged, not thrown, so the movement still resolves to `done` below
+      // regardless (see `subtractUnitCounts`'s own comment).
+      const { result: originAwayTroops, shortfall } = subtractUnitCounts(
+        originDoc.awayTroops.map((t) => ({ unitType: t.unitType, count: t.count })),
+        movement.units.map((u) => ({ unitType: u.unitType, count: u.count })),
+      );
+      if (shortfall.length > 0) {
+        this.logger.error(
+          `MovementArriveHandler: awayTroops drifted below zero applying total-wipe movement ` +
+            `${String(movement._id)} at origin ${String(originDoc._id)} — clamped at zero, ` +
+            `shortfall: ${JSON.stringify(shortfall)}`,
+        );
+      }
+      const updatedOrigin = await this.settlementModel.findOneAndUpdate(
+        { _id: originDoc._id, version: originDoc.version },
+        { $set: { awayTroops: originAwayTroops, version: originDoc.version + 1 } },
+        { session },
+      );
+      if (!updatedOrigin) {
+        throw new Error(
+          `MovementArriveHandler: version conflict applying movement ${String(movement._id)} (origin awayTroops)`,
+        );
+      }
+
       const updated = await this.movementModel.findOneAndUpdate(
         { _id: movement._id, version: movement.version },
         { $set: { status: 'done', survivors: [], version: movement.version + 1 } },
@@ -177,6 +224,39 @@ export class MovementArriveHandler implements EventHandler {
         );
       }
       return;
+    }
+
+    // Losses leave `awayTroops` too (M3a.4, §3) — they died at the target, not delayed in
+    // transit. Survivors stay counted as away until they actually land home: that credit
+    // (and the matching `awayTroops` subtraction) is `MovementReturnHandler`'s job, not this
+    // one, since these units haven't completed the return leg yet. Skipped entirely when
+    // nothing died — `result.combat.losses` always has one entry per attacking unit type,
+    // often all zero (e.g. an undetected scout) — mirrors `settleDoc`'s `elapsedMs <= 0`
+    // skip: no information gained from a write, one less contention point for a concurrent
+    // command on the same origin settlement.
+    const losses = toPlainUnitCounts(result.combat.losses).filter((l) => l.count > 0);
+    if (losses.length > 0) {
+      const { result: originAwayTroops, shortfall } = subtractUnitCounts(
+        originDoc.awayTroops.map((t) => ({ unitType: t.unitType, count: t.count })),
+        losses,
+      );
+      if (shortfall.length > 0) {
+        this.logger.error(
+          `MovementArriveHandler: awayTroops drifted below zero applying losses for movement ` +
+            `${String(movement._id)} at origin ${String(originDoc._id)} — clamped at zero, ` +
+            `shortfall: ${JSON.stringify(shortfall)}`,
+        );
+      }
+      const updatedOrigin = await this.settlementModel.findOneAndUpdate(
+        { _id: originDoc._id, version: originDoc.version },
+        { $set: { awayTroops: originAwayTroops, version: originDoc.version + 1 } },
+        { session },
+      );
+      if (!updatedOrigin) {
+        throw new Error(
+          `MovementArriveHandler: version conflict applying movement ${String(movement._id)} (origin awayTroops)`,
+        );
+      }
     }
 
     const returnAt = computeReturnAt(movement.departAt, event.dueAt);
@@ -217,6 +297,11 @@ export class MovementArriveHandler implements EventHandler {
   // distinct from the combat-caused `'allScoutsDead'` — both share the `scoutFailed` `type`
   // since the report schema's `type` enum is fixed to the three kinds §8 specifies; the
   // `reason` field in the payload is what actually distinguishes them for the client).
+  // No `awayTroops` change here (M3a.4, §3), deliberately: nobody died — the whole force
+  // just turns around unharmed — so every unit is still genuinely in transit and this
+  // settlement should keep paying their Food exactly as it already is. `awayTroops` is only
+  // ever touched when units actually stop being "in transit" (losses, a total wipe, or a
+  // completed return leg), none of which happened here.
   private async resolveMissingTarget(
     movement: MovementDocument,
     event: GameEventDocument,

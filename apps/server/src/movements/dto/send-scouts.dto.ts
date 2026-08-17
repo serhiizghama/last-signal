@@ -1,7 +1,7 @@
 import { Type } from 'class-transformer';
 import { IsArray, IsNumber, IsString, ValidateNested } from 'class-validator';
 
-// Mirrors `StartBuildDto`/`TrainScoutsDto`'s rationale (see their own comments): only
+// Mirrors `StartBuildDto`/`TrainUnitsDto`'s rationale (see their own comments): only
 // structural/shape checks live here. `@ValidateNested`/`@Type` are needed so
 // `class-validator` actually recurses into `target`/`units` when the global `ValidationPipe`
 // runs (`main.ts`) — without them a nested object survives `whitelist: true` unvalidated.

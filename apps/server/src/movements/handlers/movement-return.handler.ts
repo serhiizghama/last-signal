@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { ClientSession, Model } from 'mongoose';
 
@@ -9,6 +9,7 @@ import { Movement } from '../../schemas/movement.schema';
 import type { SettlementDocument } from '../../schemas/settlement.schema';
 import { Settlement } from '../../schemas/settlement.schema';
 import { MOVEMENT_RETURN_EVENT_TYPE } from '../movements.constants';
+import { subtractUnitCounts } from '../movements.util';
 
 interface MovementReturnPayload {
   movementId: string;
@@ -28,6 +29,11 @@ interface MovementReturnPayload {
 export class MovementReturnHandler implements EventHandler {
   readonly type = MOVEMENT_RETURN_EVENT_TYPE;
   readonly supportedPayloadVersions = [1];
+
+  // Same pattern as `SchedulerService`'s own logger — the diagnostic surface for
+  // `subtractUnitCounts`'s `shortfall` below (see that function's comment for why it clamps
+  // rather than throws).
+  private readonly logger = new Logger(MovementReturnHandler.name);
 
   constructor(
     @InjectModel(Movement.name) private readonly movementModel: Model<MovementDocument>,
@@ -71,9 +77,32 @@ export class MovementReturnHandler implements EventHandler {
       }
     }
 
+    // ...and remove the same survivors from `awayTroops` (M3a.4, §3) — they are home now,
+    // not in transit, so this settlement stops paying their Food the instant they land.
+    // Note carefully what this subtracts: exactly `movement.survivors`, not the movement's
+    // original `units`. Anyone who died along the way was already removed from `awayTroops`
+    // by `MovementArriveHandler` at the moment of death (dead troops were never "coming
+    // home" to subtract here) — so what's left counted as away, by construction, is exactly
+    // what this handler is crediting back into `troops` right now. In the normal case
+    // `shortfall` is empty; a non-empty one means `awayTroops` had already drifted (e.g. a
+    // movement sent before this step existed, whose `awayTroops` was never populated) —
+    // logged, not thrown, so the survivors above are still credited home regardless (see
+    // `subtractUnitCounts`'s own comment).
+    const { result: awayTroops, shortfall } = subtractUnitCounts(
+      homeDoc.awayTroops.map((t) => ({ unitType: t.unitType, count: t.count })),
+      movement.survivors.map((u) => ({ unitType: u.unitType, count: u.count })),
+    );
+    if (shortfall.length > 0) {
+      this.logger.error(
+        `MovementReturnHandler: awayTroops drifted below zero crediting movement ` +
+          `${String(movement._id)} home to settlement ${String(homeDoc._id)} — clamped at ` +
+          `zero, shortfall: ${JSON.stringify(shortfall)}`,
+      );
+    }
+
     const updatedSettlement = await this.settlementModel.findOneAndUpdate(
       { _id: homeDoc._id, version: homeDoc.version },
-      { $set: { troops, version: homeDoc.version + 1 } },
+      { $set: { troops, awayTroops, version: homeDoc.version + 1 } },
       { session },
     );
     if (!updatedSettlement) {

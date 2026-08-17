@@ -24,7 +24,7 @@ export interface ScoutCombatResult {
 /**
  * Resolves scout-vs-scout combat for one scouting arrival (§8, the Kirilloid-style casualty
  * curve): `atkPts = Σ scoutAttack`, `defPts = Σ scoutDefense` of the defender's troops at home,
- * `lossFraction = min(1, (defPts / atkPts) ** config.scouting.lossExponent)`. `defPts = 0` yields
+ * `lossFraction = min(1, (defPts / atkPts) ** config.combat.lossExponent)`. `defPts = 0` yields
  * `lossFraction = 0` with no special case needed — `0 ** exponent` is already 0. Defender troops
  * never take losses (Travian rule); only the attacker's `losses`/`survivors` are computed.
  *
@@ -62,7 +62,9 @@ export function resolveScoutCombat(
     };
   }
 
-  const lossFraction = Math.min(1, (defPts / atkPts) ** config.scouting.lossExponent);
+  // M3a.1: this exponent moved from `config.scouting.lossExponent` to the shared
+  // `config.combat.lossExponent` (M3 §5) — same constant, same curve, same results.
+  const lossFraction = Math.min(1, (defPts / atkPts) ** config.combat.lossExponent);
 
   // Computed together per unit type (rather than mapping `attackers` twice and cross-indexing
   // the two results) so there is no separate array lookup that TypeScript can't prove in bounds.
