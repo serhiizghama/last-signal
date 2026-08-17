@@ -71,7 +71,18 @@
     "queueActive": "В работе",
     "queuePosition": "Позиция в очереди: {{position}}",
     "queueRemaining": "Осталось: {{duration}}",
-    "queueCancel": "Отменить"
+    "queueCancel": "Отменить",
+    "trainingTitle": "Обучение разведчиков",
+    "troopsEmpty": "В поселении пока нет войск",
+    "trainCount": "Количество",
+    "trainUnitTime": "За юнита: {{duration}}",
+    "trainBatchTime": "Всего: {{duration}}",
+    "trainSubmit": "Начать обучение",
+    "trainingProgress": "Осталось {{remaining}} из {{total}}",
+    "trainingNextIn": "Следующий через: {{duration}}",
+    "influenceTitle": "Влияние",
+    "influenceProgress": "{{current}} из {{threshold}} — основание поселения откроется при {{threshold}}",
+    "influenceCapped": "{{value}} — достигнут предел поселений"
   },
   "nav": {
     "ariaLabel": "Навигация",

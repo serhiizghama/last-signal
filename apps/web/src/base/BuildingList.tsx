@@ -5,16 +5,19 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 
 import { startBuild } from '../api/endpoints';
-import type { SettlementStateView } from '../api/types';
+import type { AccountView, SettlementStateView } from '../api/types';
 import { ErrorPanel } from '../components/StatusPanels';
 import type { BuildBlockReason, BuildEligibility } from './buildEligibility';
 import { computeBuildEligibility } from './buildEligibility';
+import { CostList } from './CostList';
 import { updateSettlementCache } from './settlementCache';
+import { TrainingSection } from './TrainingSection';
 import type { LiveResources } from './useLiveResources';
 
 interface BuildingListProps {
   settlement: SettlementStateView;
   live: LiveResources;
+  account: AccountView;
 }
 
 function useBlockReasonText(block: BuildBlockReason | undefined): string | undefined {
@@ -41,29 +44,14 @@ function useBlockReasonText(block: BuildBlockReason | undefined): string | undef
   }
 }
 
-interface CostListProps {
-  cost: BuildEligibility['cost'];
-}
-
-function CostList({ cost }: CostListProps): ReactElement {
-  const { t: tResources } = useTranslation('resources');
-  const entries = Object.entries(cost).filter(([, amount]) => amount > 0);
-  return (
-    <ul className="building-card__cost">
-      {entries.map(([kind, amount]) => (
-        <li key={kind}>
-          {tResources(kind as keyof typeof cost)} {amount.toLocaleString('ru-RU')}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 interface BuildingCardProps {
   type: BuildingType;
   eligibility: BuildEligibility;
   onBuild: (type: BuildingType) => void;
   isSubmitting: boolean;
+  settlement: SettlementStateView;
+  live: LiveResources;
+  account: AccountView;
 }
 
 function BuildingCard({
@@ -71,6 +59,9 @@ function BuildingCard({
   eligibility,
   onBuild,
   isSubmitting,
+  settlement,
+  live,
+  account,
 }: BuildingCardProps): ReactElement {
   const { t } = useTranslation();
   const { t: tBuildings } = useTranslation('buildings');
@@ -128,6 +119,10 @@ function BuildingCard({
       )}
 
       {reasonText && <p className="building-card__reason">{reasonText}</p>}
+
+      {type === 'barracks' && (
+        <TrainingSection settlement={settlement} live={live} account={account} />
+      )}
     </li>
   );
 }
@@ -137,7 +132,7 @@ function BuildingCard({
  * `game-core`), and a build action disabled with a translated reason wherever
  * `computeBuildEligibility` finds one.
  */
-export function BuildingList({ settlement, live }: BuildingListProps): ReactElement {
+export function BuildingList({ settlement, live, account }: BuildingListProps): ReactElement {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
@@ -173,6 +168,9 @@ export function BuildingList({ settlement, live }: BuildingListProps): ReactElem
               eligibility={eligibility}
               onBuild={(t2) => startMutation.mutate(t2)}
               isSubmitting={startMutation.isPending && startMutation.variables === type}
+              settlement={settlement}
+              live={live}
+              account={account}
             />
           );
         })}

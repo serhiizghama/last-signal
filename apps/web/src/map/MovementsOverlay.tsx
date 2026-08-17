@@ -1,84 +1,16 @@
 import type { ReactElement } from 'react';
-import { useEffect, useRef } from 'react';
 import type { UnitType } from '@last-signal/game-core';
 import { DEFAULT_CONFIG, formatDuration } from '@last-signal/game-core';
-import type { QueryClient } from '@tanstack/react-query';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 
 import { cancelMovement } from '../api/endpoints';
-import type { MovementUnitEntry, MovementView } from '../api/types';
+import type { MovementUnitEntry, MovementView, SettlementStateView } from '../api/types';
 import { SETTLEMENTS_MINE_KEY } from '../base/settlementCache';
 import { ErrorPanel } from '../components/StatusPanels';
+import { useRefetchOnExpiry } from '../hooks/useRefetchOnExpiry';
 import { useCountdown } from '../hooks/useServerClock';
 import { MOVEMENTS_QUERY_KEY, useMovementsQuery } from './useMovementsQuery';
-
-// Mirrors `BuildQueueList`'s own `useRefetchOnExpiry` (see that file's comment for the full
-// rationale): the server's own scheduler applies `movementArrive`/`movementReturn` up to ~1s
-// after the due instant, so refetching right at the countdown's 0:00 can race it and come back
-// showing the same stale status. A short grace period plus a couple of bounded retries rides
-// that race out; retrying stops as soon as the movement's status has actually moved on from
-// the one that was ticking down (`watchStatus`).
-const REFETCH_GRACE_MS = 1500;
-const REFETCH_RETRY_DELAY_MS = 1500;
-const MAX_REFETCH_ATTEMPTS = 3;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-function useRefetchOnExpiry(
-  queryClient: QueryClient,
-  expired: boolean,
-  movementId: string,
-  watchStatus: MovementView['status'],
-  alsoInvalidateSettlements: boolean,
-): void {
-  const triggeredRef = useRef(false);
-
-  useEffect(() => {
-    triggeredRef.current = false;
-  }, [movementId, watchStatus]);
-
-  useEffect(() => {
-    if (!expired || triggeredRef.current) {
-      return undefined;
-    }
-    triggeredRef.current = true;
-    let cancelled = false;
-
-    async function refetchUntilResolved(): Promise<void> {
-      for (let attempt = 1; attempt <= MAX_REFETCH_ATTEMPTS; attempt += 1) {
-        await sleep(attempt === 1 ? REFETCH_GRACE_MS : REFETCH_RETRY_DELAY_MS);
-        if (cancelled) {
-          return;
-        }
-        await queryClient.invalidateQueries({ queryKey: MOVEMENTS_QUERY_KEY });
-        // Troops are only credited back to `settlements.troops` on the returning -> done
-        // transition (§6's `movementReturn`) — invalidating settlements on the outbound ->
-        // returning transition would just be a wasted round trip.
-        if (alsoInvalidateSettlements) {
-          await queryClient.invalidateQueries({ queryKey: SETTLEMENTS_MINE_KEY });
-        }
-        if (cancelled) {
-          return;
-        }
-        const movements = queryClient.getQueryData<MovementView[]>(MOVEMENTS_QUERY_KEY);
-        const current = movements?.find((m) => m.id === movementId);
-        if (!current || current.status !== watchStatus) {
-          return;
-        }
-      }
-    }
-
-    void refetchUntilResolved();
-    return () => {
-      cancelled = true;
-    };
-  }, [expired, queryClient, movementId, watchStatus, alsoInvalidateSettlements]);
-}
 
 interface UnitListProps {
   units: readonly MovementUnitEntry[];
@@ -113,8 +45,38 @@ function MovementRow({
   const isReturning = movement.status === 'returning';
   const dueAt = isReturning ? (movement.returnAt ?? undefined) : movement.arriveAt;
   const remainingMs = useCountdown(serverTime, dueAt);
+  const boundaryReached = remainingMs === 0;
 
-  useRefetchOnExpiry(queryClient, remainingMs === 0, movement.id, movement.status, isReturning);
+  // The boundary fix (found in review, same class as the training-UI defect): the countdown
+  // clamping at zero is not the same event as the server actually having applied
+  // `movementArrive`/`movementReturn` — without this the row froze showing a stale phase
+  // forever. `watchKey` folds in `movement.status` because the *same* movement id expires
+  // twice (outbound's arrival, then returning's own return) — status is exactly what changes
+  // between those two expiries, so it re-arms the guard for the second one.
+  const watchKey = `${movement.id}:${movement.status}`;
+  useRefetchOnExpiry<MovementView>(
+    queryClient,
+    boundaryReached,
+    watchKey,
+    MOVEMENTS_QUERY_KEY,
+    (m) => m.id === movement.id && m.status === movement.status,
+  );
+
+  // Troops are only credited back to `settlements.troops` on the returning -> done transition
+  // (§6's `movementReturn`) — refresh the settlement then too, so the player sees their
+  // returned scouts without a reload, but never on the outbound -> returning transition (a
+  // wasted round trip, since nothing about `troops` changes at arrival). There's no
+  // settlement-shaped signal here to tell "troops credited yet" apart from "not yet" the way
+  // a queue-item id can, so `isUnresolved` always reports resolved after the one grace-period
+  // refetch `useRefetchOnExpiry` already does — reusing its timing rather than forking a
+  // second retry loop just for a single best-effort refresh.
+  useRefetchOnExpiry<SettlementStateView>(
+    queryClient,
+    isReturning && boundaryReached,
+    watchKey,
+    SETTLEMENTS_MINE_KEY,
+    () => false,
+  );
 
   // The 90s recall window (§6, `config.movement.cancelWindowMs`) is a client-side
   // plausibility check only — the server is the authority and rejects a late cancel with its

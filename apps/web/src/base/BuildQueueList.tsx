@@ -1,82 +1,18 @@
 import type { ReactElement } from 'react';
-import type { QueryClient } from '@tanstack/react-query';
 import { formatDuration } from '@last-signal/game-core';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { cancelBuild } from '../api/endpoints';
 import type { SettlementBuildQueueItemView, SettlementStateView } from '../api/types';
 import { ErrorPanel } from '../components/StatusPanels';
+import { useRefetchOnExpiry } from '../hooks/useRefetchOnExpiry';
 import { useCountdown } from '../hooks/useServerClock';
 import { BUILD_QUEUE_CAPACITY } from './constants';
 import { SETTLEMENTS_MINE_KEY, updateSettlementCache } from './settlementCache';
 
 interface BuildQueueListProps {
   settlement: SettlementStateView;
-}
-
-// The server's own scheduler (`EventSchedulerService`) polls for due events roughly once a
-// second, so a completion can land up to ~1s after `completesAt` — refetching at the exact
-// instant the client's countdown hits zero can race it and come back with the build still
-// queued. A short, bounded retry (not an unbounded poll — the resource bar is deliberately
-// client-computed via `settleResources` precisely so the app never needs to poll) rides out
-// that race: wait a grace period past zero, refetch, and if the same item is still in the
-// queue, try a couple more times before giving up.
-const REFETCH_GRACE_MS = 1500;
-const REFETCH_RETRY_DELAY_MS = 1500;
-const MAX_REFETCH_ATTEMPTS = 3;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-/**
- * Refetches the settlement once `queueItemId`'s countdown has expired, retrying (bounded)
- * until that item is no longer in the queue — i.e. until the server has actually applied the
- * completion, not just until the client's clock says it should have.
- */
-function useRefetchOnExpiry(queryClient: QueryClient, expired: boolean, queueItemId: string): void {
-  const triggeredRef = useRef(false);
-
-  useEffect(() => {
-    triggeredRef.current = false;
-  }, [queueItemId]);
-
-  useEffect(() => {
-    if (!expired || triggeredRef.current) {
-      return undefined;
-    }
-    triggeredRef.current = true;
-    let cancelled = false;
-
-    async function refetchUntilResolved(): Promise<void> {
-      for (let attempt = 1; attempt <= MAX_REFETCH_ATTEMPTS; attempt += 1) {
-        await sleep(attempt === 1 ? REFETCH_GRACE_MS : REFETCH_RETRY_DELAY_MS);
-        if (cancelled) {
-          return;
-        }
-        await queryClient.invalidateQueries({ queryKey: SETTLEMENTS_MINE_KEY });
-        if (cancelled) {
-          return;
-        }
-        const settlements = queryClient.getQueryData<SettlementStateView[]>(SETTLEMENTS_MINE_KEY);
-        const stillQueued = settlements?.some((s) =>
-          s.buildQueue.some((q) => q.id === queueItemId),
-        );
-        if (!stillQueued) {
-          return;
-        }
-      }
-    }
-
-    void refetchUntilResolved();
-    return () => {
-      cancelled = true;
-    };
-  }, [expired, queryClient, queueItemId]);
 }
 
 interface QueueItemRowProps {
@@ -104,8 +40,15 @@ function QueueItemRow({
   // Once the countdown for the active item hits zero, the server has (or is about to have)
   // completed the build via its own scheduled event — refetch (with a bounded retry to ride
   // out the server's own polling latency; see `useRefetchOnExpiry`) rather than leaving the
-  // queue stuck showing "00:00" until the player happens to reload.
-  useRefetchOnExpiry(queryClient, isActive && remainingMs === 0, item.id);
+  // queue stuck showing "00:00" until the player happens to reload. A completed build item
+  // never reappears under the same `id`, so the id alone is enough to identify "this one".
+  useRefetchOnExpiry<SettlementStateView>(
+    queryClient,
+    isActive && remainingMs === 0,
+    item.id,
+    SETTLEMENTS_MINE_KEY,
+    (s) => s.buildQueue.some((q) => q.id === item.id),
+  );
 
   const totalMs =
     isActive && item.startedAt !== null && item.completesAt !== null

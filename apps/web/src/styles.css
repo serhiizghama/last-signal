@@ -475,6 +475,91 @@ img {
   color: var(--danger);
 }
 
+.training-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 2px solid var(--panel-edge);
+}
+
+.training-section__title {
+  margin: 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.training-section__form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.training-section__count {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8rem;
+}
+
+.training-section__count input {
+  width: 64px;
+  background: var(--bg-deep);
+  border: 2px solid var(--panel-edge);
+  color: inherit;
+  font: inherit;
+  padding: 4px 6px;
+}
+
+.training-section__time {
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+
+.training-queue-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--bg-deep);
+  border: 2px solid var(--panel-edge);
+  font-size: 0.8rem;
+}
+
+.training-queue-item__progress {
+  color: var(--accent);
+}
+
+.training-queue-item__countdown {
+  font-variant-numeric: tabular-nums;
+}
+
+.troop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+}
+
+.troop-list__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.influence-panel__progress {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
 .bottom-nav {
   position: sticky;
   bottom: 0;

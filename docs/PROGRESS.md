@@ -4,8 +4,8 @@ Single running log of what has actually been built and verified. Maintained by t
 orchestrator. Nothing is written here without a green check executed in-session.
 
 Source of truth for design: `docs/IMPLEMENTATION_PLAN.md` + the binding milestone records
-(`docs/M1_DESIGN_DECISIONS.md`, `docs/M2_DESIGN_DECISIONS.md` — each wins over the plan
-for its milestone's scope).
+(`docs/M1_DESIGN_DECISIONS.md`, `docs/M2_DESIGN_DECISIONS.md`,
+`docs/M3_DESIGN_DECISIONS.md` — each wins over the plan for its milestone's scope).
 
 **Format rule (2026-08-16).** Only the current milestone carries detailed per-step
 entries here. When a milestone is reviewed and committed, its per-step log moves
@@ -21,12 +21,70 @@ by the condensed summary below. Detail is never deleted, only relocated.
 full step-by-step logs with verification evidence: `docs/archive/PROGRESS_M0_M1.md`.
 
 **M2 design session — ✅ done (2026-08-16):** `docs/M2_DESIGN_DECISIONS.md` exists,
-status RESOLVED (binding for M2, beats the plan on conflict).
+status RESOLVED (binding for M2, beats the plan on conflict). Plan edits from its §15
+applied (M2.0).
 
-**Next:** owner reviews and commits the M2 record → M2 implementation begins by applying
-the plan edits listed in that record's §15, then **M2a** (world, spawn & map data) →
-**M2b** (scouts, movement & reports, server) → **M2c** (map & reports UI), per the
-decomposition in the record's §13.
+**M2 — Map & movement** is ✅ **COMPLETE and verified** — **M2a** ✅, **M2b** ✅, **M2c** ✅
+(M2c.1–M2c.4), with all three sub-milestone acceptance criteria met end to end against real
+Mongo, the real scheduler and real Chrome. Per-step evidence and the three acceptance tables
+are in the log below. **Awaiting the owner's review and commit — the whole M2 tree is still
+uncommitted.**
+
+Final M2 gate, from a `pnpm clean` tree: **522 tests** (game-core 280, server 130, web 112),
+lint / typecheck / build clean, Prettier clean across every project file,
+`pnpm install --frozen-lockfile` reproducible.
+
+**M3 design session — ✅ done (2026-08-17):** `docs/M3_DESIGN_DECISIONS.md` exists, status
+RESOLVED (binding for M3, beats the plan on conflict).
+
+**Next:** owner reviews and commits M2 → the M2 per-step log below moves verbatim to
+`docs/archive/` per the format rule → owner reviews the M3 record → M3 implementation begins
+by applying the plan edits listed in that record's §21, then **M3a** → **M3b** → **M3c** →
+**M3d** → **M3e**, per the decomposition in the record's §20.
+
+### Known debt carried out of M2 (none of it blocking)
+
+1. **A report inserted while the realtime change stream is down gets no push** — the stream
+   now self-heals (see the reopened M2b.4 entry), but the outage window itself is covered by
+   the client's own refetch, not by a resume-token replay. Deliberate, reasoned in code.
+2. **Tile selection is pointer-only** — no keyboard path to open a tile's info sheet (the
+   sheet itself is fully keyboard-operable). Wiring jump-to-coordinates to also select the
+   tile would close it cheaply.
+3. **`§5`'s "WS event when a settlement appears"** is not implemented — it would have meant
+   editing settlement creation from the realtime step; the map query's `staleTime` covers it
+   for now.
+4. **NPC band membership is not stored** — M4 must infer "which band was this NPC seeded
+   into" from building levels/Barracks presence, or add a field.
+5. **Stale comments** referencing the deleted `placement.constants.ts` / "outer-ring"
+   placement remain in `settlements.constants.ts`, `settlements.module.ts`,
+   `dev-seed.controller.ts` and `dev-seed.dto.ts`.
+6. **Nomad settlements and oases share the toxic-green marker colour** on the map,
+   distinguished only by shape (square vs circle) — tight at 0.5× zoom.
+7. **Owner decision pending:** NPC names are Latin-script ("Wolfe Reyes") next to an
+   all-Cyrillic UI. Nothing in the design record specifies their language.
+8. **The training count picker has no client-side upper bound** — the server's
+   `MAX_TRAIN_COUNT` (200) is not exposed through `game-core`, so an oversized batch surfaces
+   as an ordinary unaffordable/would-starve reason, or as a server rejection if it slips past
+   both. Correct, just not pre-empted client-side.
+
+### Notes on two deliberate implementation choices (recorded, both accepted)
+
+- **`useRefetchOnExpiry` lives in `apps/web/src/hooks/`**, generalized over the query key and
+  element type, with three call sites (build queue, training order, movement row). It started
+  as build-queue-local logic; the two boundary defects are what forced it to become shared.
+  Its correctness rests on the watch-key rule documented in the file: anything that expires
+  more than once under the same id must fold the changing timestamp (or status) into the key.
+  The training fix was validated by **temporarily disabling the hook and confirming both new
+  tests fail** — they are not accidentally-passing tests.
+- **Read-on-open fires from `ReportsScreen`, not `ReportDetail`.** List rows already carry the
+  full payload (`GET /api/reports` returns the same shape as `GET /api/reports/:id`), so the
+  detail view is purely presentational and only the mark-read side effect is real — fired via
+  a mutation only when the cached copy still shows `read: false`. Behaviourally verified live:
+  opening a report drops the unread badge.
+- **The Influence panel generalises across every configured threshold**, not only settlement
+  #2 as §9's example literally phrases it — `settlementsAllowed`/`maxSettlements` (3) clearly
+  anticipates a #3 threshold, and showing nothing between #1 and #2 would read as a bug. The
+  #2 case is the one verified live.
 
 ### Environment (this machine)
 
@@ -624,3 +682,140 @@ was the local Mongo container's connection pool recovering from a `server monito
 under load (the scheduler logged the error each tick and kept running — the resilience
 working as designed); once the pool recovered the app loaded normally and every endpoint
 answered in ~50 ms.
+
+### M2c.4 — web: scout training on the Barracks card + the Influence panel ✅ (2026-08-17)
+
+`TrainingSection.tsx` on the Barracks card (count picker, batch cost/time from
+`calcTrainCost`/`calcTrainTimeMs`/`calcTrainBatchTimeMs`, home-troop list, live countdown to
+the next unit, **no cancel** — §7 defines none), `trainEligibility.ts` mirroring
+`buildEligibility`'s disabled-with-a-reason shape for all five gates (no Barracks, no
+faction, order already running, would-starve via `wouldStarveWithTroops`, unaffordable
+against *live* resources), `InfluencePanel.tsx` (§9, display-only — no founding action) and
+a shared `CostList.tsx`.
+
+**Defect found by the orchestrator in the live acceptance run, and fixed:** the training
+countdown **froze at «Следующий через: 00:00»** forever — the unit was credited server-side
+on schedule, but the client never refetched, so the player was left staring at a finished
+order. `BuildQueueList` had solved this long ago (grace period past zero, refetch, bounded
+retry — the scheduler polls once a second, so a completion can land ~1s late); the training
+section had the countdown and none of that. This is the project's own standing lesson —
+*test time-driven UI at the boundary, not just the slope* — reproducing exactly. The fix
+**extracted the pattern into a shared `useRefetchOnExpiry` hook** used by both, rather than a
+second copy that would drift, including the subtle part: a multi-unit training order keeps
+one id across several expiries, so the re-arm key must include the changing timestamp or the
+guard fires only once. Boundary tests were added on both sides.
+
+**Verification (run by the orchestrator):** lint / typecheck clean; web **110 passed** (was
+97). Live in the real browser: «Влияние · 17 из 90 — основание поселения откроется при 90»
+(17 = Command Center 3 ×3 + Greenhouse 8, matching `calcInfluence`), and after the fix a
+second scout trained with **no reload** — the order disappeared on its own and home troops
+went «Сокольничий 1» → «Сокольничий 2».
+
+### M2b.4 reopened — the change stream died permanently, now self-healing ✅ (2026-08-17)
+
+I had accepted "a non-resumable change-stream error logs and stops until restart" as M2 debt.
+**That judgement was wrong and the live run proved it.** During a long session the Docker
+Mongo hit a `PoolClearedOnNetworkError: server monitor timeout` under load;
+`ReportsRealtimePublisher` logged one error at 23:14 and **never emitted another
+`reportArrived` for the rest of the process's life** — an hour later a real scouting arrival
+wrote a real report (server-side `unreadCount: 1`) while the browser's socket sat connected
+and the badge never moved. One transient blip on a dev laptop permanently broke realtime; on
+the 1-core VPS across a 3-week round that is a certainty, not a risk.
+
+The publisher is now a small supervisor: any `error`/unexpected `close` schedules exactly one
+reconnect after exponential backoff (1 s → 30 s cap, mirroring the scheduler's own curve),
+indefinitely — realtime has no "give up and mark failed" state to fall back to — never
+overlapping two streams or two timers, resetting the backoff and **logging the recovery** on
+success, and stopping cleanly on `onModuleDestroy`. It reopens **fresh** rather than resuming
+from a token, deliberately: a resume can be refused once the point ages out of the oplog
+(`ChangeStreamHistoryLost`), which is exactly the long-outage case, so resuming would need a
+fresh-reopen fallback behind it anyway. The stated cost: **a report inserted while the stream
+is down gets no push**, and the client's own refetch is the backstop. Seven tests cover
+recovery, backoff/reset, error+close not double-scheduling, and no leaked timer after
+shutdown. Server **123 → 130**.
+
+### M2c.2 reopened — the movements overlay froze at zero ✅ (2026-08-17)
+
+Same class as the training defect, found in the same live run: the overlay counted down to
+«Прибытие через 00:16» and stayed there while the server had already flipped the movement to
+`returning`. Fixed by reusing `useRefetchOnExpiry` (a movement expires **twice** under one id
+— arrival, then return — so the `watchKey` nuance matters here too), with boundary tests for
+outbound → returning and returning → gone. Web **110 → 112**.
+
+*Not a defect, worth knowing:* while the tab was backgrounded Chrome throttled the countdown
+timer, so the client clock lagged the server by ~14 s and the row briefly showed "arriving in
+00:14" after the server had resolved the arrival. The grace-period-plus-retry refetch
+corrected it on its own — which is precisely why that shape matters.
+
+## ✅ M2c — Map & Reports UI: COMPLETE (awaiting owner review/commit)
+
+The M2 record §13 acceptance criterion for M2c, run end to end in **real Chrome at a
+phone-width column** against a live server with 135 seeded NPCs (throwaway
+`last-signal-m2c-smoke` database):
+
+| Criterion | Result |
+|---|---|
+| register | ✅ fresh guest → name + faction (Nomads) → settlement founded at (21, 3) through the UI |
+| build to Barracks | ✅ queued from the Barracks card, «Осталось: 05:58», completed by the **real scheduler** |
+| train a scout | ✅ trained twice through the UI; the second resolved **with no reload** (troops 1 → 2) |
+| scout an NPC from the map | ✅ jump-to-coords → tile sheet → «Отправить в разведку» with 2 Сокольничих |
+| the travel preview matches the actual arrival | ✅ client preview **05:18**, server's own `arriveAt − departAt` **05:18** — exact |
+| the report appears in Reports **without a reload** | ✅ nav badge «Отчёты 1» → «Отчёты 2» on the WS push, no reload; the overlay flipped to «ВОЗВРАЩАЮТСЯ» on its own |
+| and reads in Russian | ✅ «Отправлено / Вернулось / Потери: Сокольничий ×2 / ×2 / ×0», target resources vs caps, «Войск не обнаружено», «Радиовышка слишком слаба, чтобы разведать постройки» |
+| Influence and threshold progress visible | ✅ «Влияние · 17 из 90 — основание поселения откроется при 90» |
+
+*Honest scope note:* the pre-Barracks economy (Command Center to level 3 + a Greenhouse +
+starting resources) was written directly into the throwaway database rather than played out —
+that grind is M1c functionality already accepted, and playing it would have cost hours of
+real build timers. **Everything from the Barracks build onward was done through the real UI
+against the real scheduler**, with no shortcuts.
+
+Final gate for M2c: **522 tests** (game-core 280, server 130, web 112), lint / typecheck /
+build clean from a `pnpm clean` tree.
+
+---
+
+## Log — M3 (design)
+
+### M3 design session ✅ (2026-08-17)
+
+Two rounds of structured Q&A with the owner per `docs/M2_DESIGN_SESSION_PROMPT.md` (reusable
+for later milestones), producing **`docs/M3_DESIGN_DECISIONS.md` (RESOLVED, binding for
+M3)**. Documentation only — no code, no dependencies, no schema changes.
+
+**Owner decisions (round 1):** full plan scope for M3 split into **M3a–M3e**; the battle
+model is the **Travian T3.6 shape with our numbers** (points vs points, infantry/cavalry
+defence split, wall multiplier, the same 1.5-power loss curve already shipped for scouts —
+no morale, no bash points); founding costs **3 faction-neutral Settlers trained at the
+Command Center**; **no razing — the Command Center floors at level 1**, a settlement always
+survives. **(Round 2):** the Market ships **P2P offers + a faceless world exchange** (no
+named NPC counterparties before M4); **the host settlement feeds stationed support**;
+starvation is an **hourly tick killing the weakest first** until net Food ≥ 0; Telegram
+notifications ship as a **provider interface with an in-app/WS provider live and a logging
+TG stub**, the real bot smoke-tested before M7 (same treatment TG auth got in M1 §13).
+
+**§0 anchor contract** is a battle reference table: four hand-computable battle rows plus a
+loot row, reproduced exactly by `game-core` tests, and five sim-checkable bounds (raid income
+share against M1 §0, Hidden Cache protecting ≥ 8 h of a Casual player's production, offence
+stacks paying for themselves, M2 §0's travel bounds still holding with the real roster, no
+unbeatable wall). **I re-derived every row numerically before writing it down** and corrected
+five figures that were wrong in the 3rd–4th digit (rows 3 and 4's `x`, the cache values at L5
+and L10, and the Barracks L20 speed-up, which is 6.0× not ~6.4×). Prettier clean on the file.
+
+**Consequences worked out rather than assumed** (record §19, the part that earns the
+session): M2b.3 deducts units at send, so **in-flight troops currently eat no Food** — a real
+exploit once armies exist, closed by the `troops` / `awayTroops` / `stationedTroops` split
+that keeps upkeep a pure function of one document; M2a.5's NPC bands have **no defenders**,
+so 135 free farms would break the §0 raid-income bound on day one — the seeder gains defence
+stacks and Hidden Cache levels; `config.scouting.lossExponent` is promoted to a shared
+`config.combat.lossExponent` (one curve family for the whole game); the battle random factor
+must be **derived from `hash(seed, movementId)`, never `Math.random()`**, or a crash-replay
+would produce a different battle than the report already describes; destruction needs an
+explicit build-queue rule (`level = min(targetLevel, current + 1)`) and a storage clamp; the
+scheduler's strict `dueAt` ordering becomes a **load-bearing** property (it is what serialises
+battles); and M2b.4's change-stream resume debt is pulled into M3e because notifications make
+push delivery load-bearing.
+
+**Not done here, on purpose:** the ten plan edits listed in the record's §21 are **not yet
+applied** to `docs/IMPLEMENTATION_PLAN.md` — they are M3.0's job, the way M2.0 applied M2's
+§15. No verification gate was run in this session because nothing executable changed.

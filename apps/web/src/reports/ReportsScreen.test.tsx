@@ -227,9 +227,9 @@ describe('ReportsScreen — list', () => {
     fireEvent.click(screen.getByText(reportsRu.loadMore));
 
     await waitFor(() => {
-      expect(
-        fetchMock.mock.calls.some(([url]) => url === '/api/reports?cursor=cursor-abc'),
-      ).toBe(true);
+      expect(fetchMock.mock.calls.some(([url]) => url === '/api/reports?cursor=cursor-abc')).toBe(
+        true,
+      );
     });
 
     expect(await screen.findByText(reportsRu.list.scoutFailed)).toBeInTheDocument();
@@ -331,7 +331,9 @@ describe('ReportsScreen — report detail per type', () => {
     expect(resources?.textContent).toContain((123).toLocaleString('ru-RU'));
     expect(resources?.textContent).toContain((1000).toLocaleString('ru-RU'));
 
-    expect(within(detail).getByText(reportsRu.detail.scout.buildingsUnavailable)).toBeInTheDocument();
+    expect(
+      within(detail).getByText(reportsRu.detail.scout.buildingsUnavailable),
+    ).toBeInTheDocument();
     expect(container.querySelector('.report-detail__buildings')).not.toBeInTheDocument();
   });
 
@@ -370,7 +372,9 @@ describe('ReportsScreen — report detail per type', () => {
     await screen.findByText(reportsRu.detail.scout.title);
 
     const detail = container.querySelector('.report-detail') as HTMLElement;
-    expect(within(detail).queryByText(reportsRu.detail.scout.buildingsUnavailable)).not.toBeInTheDocument();
+    expect(
+      within(detail).queryByText(reportsRu.detail.scout.buildingsUnavailable),
+    ).not.toBeInTheDocument();
     const buildings = container.querySelector('.report-detail__buildings');
     expect(buildings?.textContent).toContain('Штаб');
     expect(buildings?.textContent).toContain('Ур. 3');
@@ -432,7 +436,9 @@ describe('ReportsScreen — report detail per type', () => {
     );
 
     fireEvent.click(await screen.findByText(reportsRu.list.scoutFailed));
-    expect(await screen.findByText(reportsRu.detail.scoutFailed.targetNotFound)).toBeInTheDocument();
+    expect(
+      await screen.findByText(reportsRu.detail.scoutFailed.targetNotFound),
+    ).toBeInTheDocument();
     expect(screen.queryByText(reportsRu.detail.scoutFailed.allScoutsDead)).not.toBeInTheDocument();
     expect(screen.getByText('Цель: 9:9')).toBeInTheDocument();
   });
@@ -498,6 +504,8 @@ describe('ReportsScreen — live updates', () => {
     // Proves this happened via a fresh fetch (the invalidation), not a page reload — the
     // component tree stays mounted throughout and the browser's `fetch` was actually called
     // again.
-    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/reports').length).toBeGreaterThan(1);
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/reports').length).toBeGreaterThan(
+      1,
+    );
   });
 });

@@ -6,6 +6,7 @@ import type { NavTab } from './BottomNav';
 import { BottomNav } from './BottomNav';
 import { BuildQueueList } from './BuildQueueList';
 import { BuildingList } from './BuildingList';
+import { InfluencePanel } from './InfluencePanel';
 import { ResourceBar } from './ResourceBar';
 import { useLiveResources } from './useLiveResources';
 
@@ -36,9 +37,11 @@ export function BaseScreen({ settlement, account, onNavigateTab }: BaseScreenPro
 
       <ResourceBar settlement={settlement} live={live} />
 
+      <InfluencePanel influence={settlement.influence} />
+
       <BuildQueueList settlement={settlement} />
 
-      <BuildingList settlement={settlement} live={live} />
+      <BuildingList settlement={settlement} live={live} account={account} />
 
       <BottomNav active="base" onNavigate={onNavigateTab} />
     </div>

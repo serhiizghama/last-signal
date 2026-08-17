@@ -88,7 +88,8 @@ export function ScoutReportBody({ payload }: ScoutReportBodyProps): ReactElement
           <ul className="report-detail__resources">
             {RESOURCE_KINDS.map((kind) => (
               <li key={kind}>
-                {tResources(kind)}: {floorForDisplay(intel.resources[kind]).toLocaleString(RU_LOCALE)} /{' '}
+                {tResources(kind)}:{' '}
+                {floorForDisplay(intel.resources[kind]).toLocaleString(RU_LOCALE)} /{' '}
                 {intel.storageCaps[kind].toLocaleString(RU_LOCALE)}
               </li>
             ))}

@@ -13,7 +13,10 @@ interface ReportsListProps {
   onOpenReport: (id: string) => void;
 }
 
-const REPORT_TYPE_LABEL_KEY: Record<ReportView['type'], 'list.scout' | 'list.scoutFailed' | 'list.scoutDetected'> = {
+const REPORT_TYPE_LABEL_KEY: Record<
+  ReportView['type'],
+  'list.scout' | 'list.scoutFailed' | 'list.scoutDetected'
+> = {
   scout: 'list.scout',
   scoutFailed: 'list.scoutFailed',
   scoutDetected: 'list.scoutDetected',
@@ -64,12 +67,7 @@ export function ReportsList({
       </ul>
 
       {hasNextPage && (
-        <button
-          type="button"
-          className="button"
-          disabled={isFetchingNextPage}
-          onClick={onLoadMore}
-        >
+        <button type="button" className="button" disabled={isFetchingNextPage} onClick={onLoadMore}>
           {isFetchingNextPage ? tCommon('actions.loading') : t('loadMore')}
         </button>
       )}

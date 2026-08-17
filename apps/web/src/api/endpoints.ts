@@ -1,4 +1,4 @@
-import type { BuildingType } from '@last-signal/game-core';
+import type { BuildingType, UnitType } from '@last-signal/game-core';
 
 import { apiClient } from './client';
 import type {
@@ -56,6 +56,22 @@ export function cancelBuild(
   return apiClient.post<SettlementStateView>(
     `/settlements/${id}/build/${queueItemId}/cancel`,
     undefined,
+    signal,
+  );
+}
+
+// §7/§11: one route, `{unitType, count}` for the caller's own faction scout — the server
+// resolves that against `account.faction` itself (`TrainScoutsDto`'s own comment), so the
+// client never needs to send anything else.
+export function trainScouts(
+  id: string,
+  unitType: UnitType,
+  count: number,
+  signal?: AbortSignal,
+): Promise<SettlementStateView> {
+  return apiClient.post<SettlementStateView>(
+    `/settlements/${id}/train`,
+    { unitType, count },
     signal,
   );
 }
