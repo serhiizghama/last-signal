@@ -23,10 +23,10 @@ export class MovementNotFoundError extends HttpException {
   }
 }
 
-// Every rejected `sendScouts`/`cancelMovement` command (unknown type, bad target, non-scout
-// unit, insufficient troops, empty unit list, wrong status, expired cancel window) — one
-// class, key + params + status supplied at the call site, mirroring `BuildCommandError`/
-// `TrainCommandError`.
+// Every rejected `sendMovement`/`cancelMovement` command (unknown type, bad target, a unit
+// disallowed for the requested type, insufficient troops, empty unit list, invalid siege
+// target, wrong status, expired cancel window) — one class, key + params + status supplied at
+// the call site, mirroring `BuildCommandError`/`TrainCommandError`.
 export class MovementCommandError extends HttpException {
   constructor(
     key: string,

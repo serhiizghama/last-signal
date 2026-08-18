@@ -32,16 +32,28 @@ RESOLVED (binding for M3, beats the plan on conflict).
 plan edits listed in that record's §21, applied before the first line of M3 code — the way
 M2.0 applied M2's §15).
 
-**M3.0** ✅ and **M3a** ✅ (M3a.1–M3a.7) are complete and verified; all five M3a acceptance
-criteria were met against the real HTTP API, real Docker Mongo and the real scheduler. **The
-M3a tree is uncommitted and awaiting the owner's review.** Gate: **606 tests** (game-core 327,
-server 166, web 113), lint / typecheck / build clean from a `pnpm clean` tree.
+**M3.0** ✅ and **M3a** ✅ (M3a.1–M3a.7) are complete, verified and **committed (`6dc6d54`)**;
+all five M3a acceptance criteria were met against the real HTTP API, real Docker Mongo and the
+real scheduler. Gate at commit: **606 tests** (game-core 327, server 166, web 113), lint /
+typecheck / build clean from a `pnpm clean` tree.
 
-**Two owner decisions are pending** (neither blocks M3b): the §1 faction-identity claims that
-the draft stats do not support (M3a.1's entry), the siege-before-infantry starvation order
-(M3a.3's entry), and — found by M3a's live acceptance run — **troops that starve in transit
-are resurrected when the movement returns** (the M3a summary below, with three options and a
-recommendation).
+**M3b** ✅ (M3b.0–M3b.3) is complete and verified — the battle engine, the deterministic roll,
+loot behind the Hidden Cache and the siege pass, all pure `game-core`, all five §20 acceptance
+criteria met. **The M3b tree is uncommitted and ready for the owner's review.** Gate:
+**737 tests** (game-core 458, server 166, web 113), lint / typecheck / build clean from a
+`pnpm clean` tree, with no warnings anywhere in the output.
+
+**Next: M3c — attack, support & oases (server).**
+
+**All four open owner decisions are closed (2026-08-17)** and recorded verbatim in the design
+record's new **§24**, which amends §4 and §5:
+
+| # | Question | Decision |
+|---|---|---|
+| A | siege starves before cheap infantry (M3a.3) | **Siege dies last, alongside Settlers** — a dies-last rank in `starvationOrder` |
+| B | troops that starve in transit are resurrected on return (M3a's live run) | **`awayTroops` are exempt from starvation** — they still *pay* upkeep, they just cannot die. Owner accepted the flagged cost: a marching army is immortal to the tick, so home troops and guests die instead |
+| C | §5's contingent-loss rule is self-contradictory (found while briefing M3b) | **Uniform loss fraction — Travian's actual rule.** The defPts-weighted casualty budget reading is superseded |
+| D | §1's faction-identity claims are false against §1's own numbers (M3a.1) | **Defer every retune to M4's `tools/sim`.** Nothing is hand-tuned before then; §0 stays the fixed contract |
 
 ### Known debt carried out of M2 (none of it blocking)
 
@@ -782,7 +794,15 @@ armed.
 Final M3a gate from a `pnpm clean` tree: **606 tests** (game-core 327, server 166, web 113),
 lint / typecheck / build clean.
 
-### ⚠️ Defect found by the live acceptance run — needs an owner decision (blocks nothing yet)
+### ⚠️ Defect found by the live acceptance run — ✅ RESOLVED by owner decision (record §24 B)
+
+> **Closed 2026-08-17: the owner chose option 2 — `awayTroops` are exempt from starvation.**
+> They still pay Food upkeep (the M3a.4 exploit fix stands); they simply cannot die, so there
+> is nothing left to resurrect. Implemented in M3b.0. The consequence was flagged before the
+> decision and accepted: a marching army is immortal to the tick, so a starving settlement's
+> home garrison and its guests die instead, and "march to dodge the tick" still works at the
+> price of your home defence, manual re-sending each round trip, and a frozen economy. Full
+> reasoning in `docs/M3_DESIGN_DECISIONS.md` §24 B. The analysis below is kept as written.
 
 **Troops that starve to death while in transit come back to life when the movement returns.**
 
@@ -826,3 +846,569 @@ they want the simplest thing that cannot break replay determinism. Either is a s
 option 1 belongs in M3c (where two-document arrival transactions already exist), option 2 is a
 few lines in `resolveStarvation`'s caller. **Nothing downstream is blocked by it** — the
 exploit requires deliberately starving an army that is already marching.
+
+### M3b.0 — the two starvation amendments (record §24 A and B) ✅ (2026-08-17)
+
+The owner's answers to the two questions M3a left open, applied before any M3b engine code so
+that no later step is written against a rule that is about to change. Both are recorded in the
+design record's new §24; this entry records the implementation.
+
+**A — siege dies last, alongside Settlers.** `compareStarvationOrder` gained a `diesLastRank`
+(settler 2 > siege 1 > everything else 0) compared **before** the combat-weight sum, rather
+than a tweak to the weight itself — the weight is also the battle-strength expression, and
+bending it to fix a starvation ordering would have moved a shared formula for a local reason.
+The pre-existing settler special case was folded into the rank, not left running alongside it.
+Verified by driving the built package: the order is now `lookout falconer surveyorDrone
+feralDog brute scavengerGang torcher hunterSniper skirmisher bulwark exoTrooper duneBuggy
+biker armoredQuad | ballistaWagon railSling ramTruck | settler` — every siege unit after every
+non-siege combat unit, the Settler last.
+
+**B — `awayTroops` are exempt from starvation.** `StarvationInput.awayTroops` stays (it is
+part of the upkeep union, so a marching army still *pays*: M3a.4's exploit fix is untouched),
+but it is simply absent from the target list, and `killed.awayTroops` / `remaining.awayTroops`
+were **removed from `StarvationResult` entirely** — under this rule they would be a constant
+empty list and a verbatim echo of the input, and keeping them is an open door for the
+resurrect-on-return defect to walk back through. There is now nothing for a caller to
+resurrect. Server side: the handler no longer writes `awayTroops` back and the starvation
+report payload lost `killedAwayTroops`.
+
+**Verified numerically by the orchestrator, against the built package, not on report.** Same
+buildings (CC 1 + Greenhouse 1) and 60 home Brutes: net Food **−31.00**, and 31 home Brutes
+die. Add 20 in-transit Brutes and net Food is **−51.00** — a delta of exactly 20.0000, their
+upkeep — and **51** home Brutes die. That single pair of runs proves both halves at once: the
+in-transit army still raises the deficit, and its 20 units of upkeep are paid for with 20 extra
+*home* casualties. That is precisely the consequence flagged to the owner before the decision
+and accepted (record §24 B). A deficit driven entirely by in-transit upkeep (500 away Brutes,
+no home troops) returns `killed: []`, `resolved: false`, `netFoodPerHourAfter: −471.00` — no
+kill, no spin.
+
+**The no-progress path, the risk this step actually carried, confirmed by reading the code.**
+`resolved: false` is newly reachable, so the handler had to be checked, not assumed. Two
+branches, both already correct: the trigger-no-longer-holds branch returns before
+`resolveStarvation` is called and re-derives its deadline from `computeStarvationDeadline`
+(anchored on `event.dueAt`, never the wall clock, returning `null` when Food has recovered);
+and `writeReports` gates on `anyKilled`, so a tick that kills nothing writes **no** report for
+the owner or any supporter. The re-arm is `event.dueAt + HOUR_MS`, driven by
+`result.netFoodPerHourAfter < 0` and **not** by whether anything died — so a stuck
+`resolved: false` settlement re-ticks on the ordinary hourly cadence forever, never
+immediately. One cheap settlement write per hour (to advance `lastStarvationTickAt`, the
+idempotency guard), no report storm, no busy loop.
+
+**One error caught in review and sent back:** the new doc comment called the Settler "a
+4000-resource investment" — 4000 is its `baseTrainTimeSec`; the cost is **2500**
+(900 + 700 + 400 + 500). Fixed. (The record's own §4/§13 prose says "2100", stale since M3.0
+flagged it; §1's stat table remains the authoritative draft.)
+
+**Verification (orchestrator-run, not taken on report):** `starvationOrder` and the
+deficit/casualty arithmetic driven directly against `dist/` as above; server suite **19 files
+/ 166 tests green** on my own run (Mongo up on 27117); game-core green (see M3b.1's entry for
+the combined count). The two edited integration assertions now check that `awayTroops` is
+**byte-identical** after a tick and that `killedAwayTroops` is absent from the payload.
+
+### M3b.1 — game-core: `resolveBattle`, the deterministic roll, the §0 contract ✅ (2026-08-17)
+
+The battle engine, pure — **zero server code**, which is exactly why record §20 makes M3b its
+own sub-milestone: it can be verified entirely against §0. New `packages/game-core/src/combat/`
+with `battle.ts` (`resolveBattle`, `BattleKind`, `BattleContingent`, `BattleInput`,
+`BattleContingentOutcome`, `BattleResult`) and `roll.ts` (`battleRoll`). Config gained
+`combat.randomFactor` (draft 0.05) and a new **top-level** `wall: { defenseRatioPerLevel: 1.03 }`.
+`configVersion` stayed **7**, per the M3a.1 policy.
+
+**Config-block placement (technical micro-decision, recorded).** §5/§6/§7 name their knobs
+`wall.defenseRatioPerLevel`, `hiddenCache.base`, `siege.resistanceBase` — with the `config.`
+prefix the record uses elsewhere, that reads as *top-level* blocks. They are top-level, each
+with a doc comment stating it is battle tuning and is distinct from the same-named entry in
+`buildings` (the cost/level curve). Following the record's own names beats a tidier nesting
+that would drift from the document every reader will have open beside the code.
+
+**The §0 contract reproduces exactly**, `randomFactor` pinned to 0 — all four battle rows with
+their hand-computed loss counts (7/20, 7/19 with the one surviving Torcher that makes a raid a
+*partial* engagement, 11/20 behind a L10 wall, and 10 Brute + 4 Biker/30 for the
+infantry/cavalry split), plus the fifth row's `lootCapacity` of **5580**. Those expectations
+are hardcoded on purpose and the spec says so: §0 *is* the contract, and this is the one place
+where a hardcoded expectation is right rather than a change-detector.
+
+**Owner decision §24 C is implemented and documented in the code:** defender losses use the
+**uniform loss fraction** (Travian's real rule) across every contingent and unit type, not a
+defPts-weighted casualty budget. The rounding is `Math.round(fraction × count)` per unit type
+independently, clamped — the exact convention `scouting/combat.ts` already ships, reused rather
+than re-invented, so one loss curve and one rounding rule cover both systems.
+
+**Verification (orchestrator-run).** Beyond re-running build / typecheck / suite
+(**434 tests**, game-core, up from 327 — M3b.0's +6 and M3b.1's +107), I drove the built
+package on a case I hand-derived **before** looking at the output: 100 Brutes raiding a target
+holding 20 Torchers with an ally's 100 Lookouts stationed. Predicted `defPts` 2700,
+`x = 0.5545691`, defender fraction `0.6432651`, attacker fraction `0.3567349` → 36 Brutes lost,
+64 surviving → capacity 3840; 13 Torchers and 64 Lookouts dead. The engine produced exactly
+that, and the result is **byte-identical** (`JSON.stringify` equality) with the two contingents
+passed in reverse order — the replay-determinism property, confirmed independently rather than
+only in the subagent's own test. `battleRoll` is stable across repeat calls, differs per
+`movementId`, and lands inside `[−1, 1)` across 2000 keys (min −0.9999, max 0.9997).
+
+**Recorded for M3c:** `resolveBattle` deliberately does **not** compose the loot and siege
+passes, though §5 phrases them as one function. Each is a separate pure function
+(`resolveLoot`, then the siege pass) and the arrival resolver composes them, because the
+composition needs the *defender's settled resources* and *building levels* — state that belongs
+to the caller's transaction, not to a battle calculation. `lootCapacity` and `attackerPrevailed`
+are carried on `BattleResult` precisely so the composition cannot silently skip §6's
+"an unsuccessful attacker loots nothing".
+
+### M3b.2 — game-core: loot, the Hidden Cache and the §0 loot row ✅ (2026-08-17)
+
+`combat/loot.ts` — `hiddenCacheProtection` and `resolveLoot` — plus a top-level
+`hiddenCache: { base: 200, ratio: 1.35 }` config block, sibling to `wall` and following the
+same convention. `configVersion` stayed 7.
+
+**The signature carries the rule.** `resolveLoot(config, battle, target)` takes
+`battle: Pick<BattleResult, 'lootCapacity' | 'attackerPrevailed'>` rather than a bare capacity
+number, so §6's "an unsuccessful attacker loots nothing" cannot be forgotten by the M3c caller
+— omitting it becomes a compile error instead of a runtime bug found in a live raid. The same
+self-enforcing shape is now the house pattern for the whole `combat` module.
+
+**Level 0 is special-cased to 0 protection, not the raw formula.** `base × ratio ** (level - 1)`
+evaluates to `200 × 1.35 ** -1 = 148.15` at level 0 — a protection reading for a building that
+does not exist. A settlement with no Hidden Cache protects nothing; negative levels fold into
+the same branch defensively rather than extrapolating the curve into territory it was never
+meant to cover. This is the kind of off-by-one that would have quietly given every settlement
+in the world 148 free protected units of each resource.
+
+**Verified by the orchestrator against the hand-computed §0 row before reading the spec's
+assertions:** protection at L5 = `200 × 1.35^4` = **664.30125**; available =
+2335.69875 / 535.69875 / **0** / 1335.69875 = **4207.09625**, below the 5580 capacity, so all of
+it is taken and the cache saves the Electronics *entirely*. The spec asserts exactly those
+numbers, and — the part that matters — the **5580 is derived from a real `resolveBattle` call**
+for §0 row 1 rather than typed in a second time, so the loot row genuinely tests the wiring
+between the two modules instead of restating a constant. Cherry-picking is disproved
+properly: in the capacity-bound case each resource's share of `taken` is asserted equal to its
+share of `available`, so a raider cannot skim Electronics and leave the bulk behind.
+
+Resources stay **floats** end to end (no rounding, no flooring — the M1 numeric convention),
+and clamping the credited loot to the attacker's storage caps is documented as the M3c
+caller's job, not this function's. Gate: **445 tests** green (game-core), lint/typecheck/build
+clean, prettier clean on all five touched files.
+
+### M3b.3 — game-core: the siege pass, the resistance curve, the CC floor ✅ (2026-08-17)
+
+`combat/siege.ts` — `siegeResistance` and `resolveSiegePass` — plus a top-level
+`siege: { resistanceBase: 6, resistanceRatio: 1.18, commandCenterFloor: 1 }` config block, the
+third sibling of `wall` and `hiddenCache`. `configVersion` stayed 7. `resolveSiegePass` takes
+`Pick<BattleResult, 'attacker' | 'attackerPrevailed'>`, the same self-enforcing shape
+`resolveLoot` established, so §7's "a defeated attacker never gets a siege pass" cannot be
+forgotten by M3c.
+
+**Two pools, spent one level at a time, nothing carried over.** Wall points (`Σ wallDamage`)
+and building points (`Σ buildingDamage`) come only from **surviving** siege units. The wall is
+always breached first; building points reach `siegeTarget` **only** if the wall reaches 0 in
+this pass (or was already 0), and if `siegeTarget === 'wall'` they are wasted — the attacker's
+choice, not an error. A level only ever drops when its full `resistanceBase × resistanceRatio
+** (L - 1)` cost is paid; leftovers are discarded, and no partial-level state is ever stored.
+
+**Verified by the orchestrator against the built package, all six cases hand-derived first:**
+
+| Case | Result |
+|---|---|
+| §7's worked draft — 10 Ram Trucks (80 pts) vs a L10 wall | **L10 → L7**, 68.27872 spent, 11.72128 discarded; the L7 step needs 16.19732 ✔ |
+| building phase — 10 Ram Trucks (30 pts) vs a L5 Barracks, wall already down | **L5 → L2**, 29.84526 spent, 0.15474 discarded ✔ |
+| the wall gate — 1 Ram Truck (8 pts) vs a L20 wall | wall unmoved, `wallBreached: false`, **every** building point discarded, Barracks untouched ✔ |
+| the CC floor — a L3 Command Center under 1500 points | **L3 → L1, never 0**, 1484.57 discarded ✔ |
+| a Command Center already at its floor | absorbs nothing, spends 0, discards all 1500 ✔ |
+| defeated attacker / no siege units among survivors | complete no-op in both cases ✔ |
+
+**One interpretation call the subagent flagged, checked and accepted.** On
+`attackerPrevailed === false` it zeroes `wallPoints`/`buildingPoints` outright rather than
+tallying them and then spending nothing. That is not a divergence: `attackerPrevailed` is
+`x < 1 && !attackerWiped`, and on an **assault** — the only kind that may carry siege units
+(§6) — a false value means the attacker was wiped, so the surviving-unit tally is 0 anyway. The
+one shape that could differ, a raid clamped at `x = 1` with survivors, cannot carry siege by
+validation. Equivalent in every reachable state; the simpler branch stands.
+
+### ✅ M3b — The battle engine (pure): COMPLETE (uncommitted, ready for owner review)
+
+Record §20's M3b acceptance criteria, every one met — and M3b was deliberately specified as a
+**pure** sub-milestone, so all of it is verifiable against §0 with zero server code:
+
+| Criterion | Result |
+|---|---|
+| the §0 table (four battle rows + the loot row) reproduced **exactly** with `randomFactor: 0` | ✅ rows 1–4 with their hand-computed loss counts, plus the loot row's `lootCapacity` 5580 → 4207.09625 taken behind a L5 cache |
+| the roll proven deterministic across two runs from the same `(seed, movementId)` | ✅ in the spec and re-confirmed by the orchestrator across 2000 keys, always inside `[−1, 1)` |
+| property test: losses never exceed the army | ✅ a fixed scenario × kind × wall × roll matrix, both sides |
+| property test: an attacker with 0 attack points is rejected | ✅ throws, for a zero-count army and a genuinely empty one |
+| property test: defender losses split across contingents | ✅ proportional to body count per owner decision §24 C, and byte-identical under reversed contingent order |
+
+**Gate, from a `pnpm clean` tree: 737 tests** (game-core **458**, server 166, web 113) —
+lint / typecheck / build clean. I read the full stdout, not just exit codes: **no warnings, no
+deprecations, no ignored build scripts** anywhere in the run. Repo-wide Prettier flags only the
+two pre-existing static mockups (`apps/web/public/_mockup.html`, `_preview.html`), untouched by
+M3b and already recorded as pre-existing in M3a.1.
+
+**What M3b deliberately did not build**, so M3c does not have to guess: no composition of
+battle → loot → siege into one call (the caller owns that, because it needs the defender's
+settled resources and building levels inside its own transaction); no send-time validation
+(scouts barred from armies, `atkPts > 0`, siege only on assaults, protection checks); and no
+persistence of any level change, storage clamp or build-queue adjustment — §7 resolves those
+rules, but they belong to M3c's arrival resolver.
+
+### M3c — plan (2026-08-17)
+
+Record §20's M3c is the largest sub-milestone in M3: attack/support movements and their
+arrival resolvers, the two-document transaction of §18, loot on the return leg, siege with the
+Command Center floor and the storage clamp, support recall/evict, oasis live state and
+raiding, beginner protection, and `GET /api/movements/incoming`. Decomposed into eight steps:
+
+| Step | Scope | Depends on |
+|---|---|---|
+| **M3c.1** | `game-core`: oasis target defenders + lazy `settleOasis`, `incomingDetailTier`, the protection predicate, and the `oasis` / `radioTower` / `protection` config blocks | — |
+| **M3c.2** | schemas: widen `MovementType` (all six) and `ReportType`, movement `toOasisId` / `loot` / `siegeTarget`, oasis live state, `account.protectedUntil` + stamping it | — |
+| **M3c.3** | send commands: `raid` / `assault` / `support` with §9's validation, `awayTroops` accounting, the uniform 90 s cancel, **and all of §11's send-side enforcement** (see the re-cut below) | 1, 2 |
+| **M3c.4** | the per-type arrival-resolver registry (§9) + the §18 two-document battle arrival, defender/stationed losses, battle reports | 3 |
+| **M3c.5a** | the **whole** loot pass: computed and deducted from the defender at arrival, carried on `movement.loot`, credited and storage-clamped on the return leg, overflow reported | 4 |
+| **M3c.5b** | siege application (CC floor, the storage clamp after a destroyed Warehouse/Cold Storage, the build-queue `min(target, current+1)` rule) + the `buildingDestroyed` report | 5a |
+| **M3c.6** | support arrival → `stationedTroops`, the recall/evict pair, stationed scouts counting for scout defence and detection | 4 |
+| **M3c.7** | oases: lazy live state, raiding and scouting them | 4 |
+| **M3c.8** | `GET /api/movements/incoming` with its Radio Tower tiers + §11's "the map marks the settlement as protected" flag | 3 |
+
+**Two orchestrator re-cuts of this table, decided when M3c.3 was briefed (both structural, no
+design reopened).** (1) **§11's send-side enforcement moved out of M3c.8 and into M3c.3.**
+Both halves of §11 — rejecting a foreign movement aimed at a protected account, and lifting
+the sender's own protection on their first `raid`/`assault` at another account — live in the
+same method, in the same validation pipeline, in the same transaction as the send. Splitting
+them across two steps would have meant re-opening that method a second time to thread one more
+check through an ordering whose every position is already justified by a comment. M3c.8 keeps
+what is genuinely its own: the incoming endpoint and the map-side protected marker. (2) **The
+arrival-dispatch guard moved out of M3c.4 and into M3c.3.** `MovementArriveHandler`
+unconditionally runs `resolveScouting` today, so the moment M3c.3 can send a `raid`, an
+arriving raid would silently resolve as a scouting mission — a wrong battle written to two
+players' report inboxes. M3c.3 therefore adds the type check that makes the handler *fail
+loudly* (the event retries, then dead-letters, and the movement stays `outbound` and
+recoverable) until M3c.4 replaces it with §9's real per-type resolver registry. A dead-lettered
+event is recoverable; a raid resolved as a scout is not. (3) **The loot pass moved wholly into
+M3c.5.** The table's original split — arrival in M3c.4, "loot credited on the return leg" in
+M3c.5 — would have put loot's *computation and defender deduction* in one step and its
+*crediting* in the next, splitting a single §6 rule across two subagents and two review passes.
+M3c.4 therefore resolves the battle and writes nothing about loot at all; M3c.5 owns §6
+end to end, alongside §7's siege pass, which is the other "after the battle" pass over the
+same defender document.
+
+**One design reading recorded, not asked** (§11 vs §19.2): **NPC accounts get no beginner
+protection.** §11 says "NPCs are covered too", which reads two ways — that NPCs *hold*
+protection, or that NPCs must *respect* it. The sentence's own continuation settles it ("M4's
+Marauder must respect `protectedUntil` … because it goes through the same command service"),
+and §19.2 removes all doubt from the other direction: it extends the NPC seeder bands with
+real defenders and Hidden Caches precisely because "135 free farms with zero defence would
+hand every player the §0 raid-income bound on day one". Protecting all 135 NPCs for 72 h would
+instead make the entire world un-raidable for the first three days and break §0's raid-economy
+bounds outright. This falls out of the code for free — `NpcSeederService` writes settlements
+via `insertMany` and never touches `createSettlement`, which is the only path that stamps
+`protectedUntil` — and the reasoning is recorded at the stamping site so nobody later "fixes"
+the asymmetry.
+
+**One technical necessity recorded** (§10): the oasis carries **two** regeneration timestamps,
+not the one §10's field list names. Food is continuous, so `lastRegenAt` advances to `now`
+exactly like `SettlementResources.lastCalcAt`; defenders are discrete (one unit per 2 h), so
+`lastDefenderRegenAt` may only advance in whole intervals. Sharing one timestamp would discard
+the remainder on every settle, and an oasis settled every few minutes by passing scouts would
+regenerate its garrison *never*. The second field is what makes §10's own stated mechanic
+work.
+
+### M3c.1 — game-core: oasis live state, incoming tiers, the protection predicate ✅ (2026-08-17)
+
+`map/oasis-state.ts` (`oasisTargetDefenders`, `settleOasis`), `scouting/incoming.ts`
+(`incomingDetailTier`) and `protection.ts` (`isBeginnerProtected`,
+`beginnerProtectionUntil`), plus three top-level config blocks — `oasis`, `radioTower`,
+`protection` — siblings of M3b's `wall` / `hiddenCache` / `siege`. `configVersion` stayed 7.
+
+**The two-timestamp decision, proven rather than argued.** I drove the built package through
+the failure mode the second timestamp exists to prevent: an oasis raided down to 1 defender of
+each type, then **settled every 60 seconds** across three regeneration intervals — the traffic
+pattern a few passing scouts would produce. It regenerated to **4 of each**, exactly matching a
+single settle at the same instant. Under one shared timestamp it would have sat at **1 and 1
+forever**, because every settle would have seen `elapsed < interval` and credited nothing. The
+remainder-preservation identity also holds directly: settling at 1.5 intervals then 3 equals
+settling once at 3.
+
+**The off-by-one guard held.** `rollRange` is the count of distinct values (13 Feral Dogs,
+7 Scavenger Gangs), not the maximum — the reading that would silently narrow every garrison in
+the world. Swept all 3721 grid coordinates: Feral Dogs land in **12–24** and Scavenger Gangs in
+**4–10**, both inclusive bounds actually reached, not merely never exceeded.
+
+Also verified against the built package: a never-settled oasis materialises at full target with
+an empty pool (so world generation keeps writing nothing but coordinates — no migration);
+Food accrues at exactly 120/h and clamps at 4000; a backwards clock is an exact no-op;
+tiers resolve `0 → existence, 1 → kind, 4 → kind, 5 → full, 20 → full`; protection is 72 h and
+`now === protectedUntil` reads as **already expired**, matching the codebase's existing
+duration-boundary convention.
+
+**Two behaviours recorded, neither blocking.** (1) The subagent chose to apply the
+remainder-preserving formula uniformly rather than special-casing "already at target" — I
+checked, and the defender counts are identical either way since growth is capped; only the
+stored timestamp differs and nothing else reads it. (2) A backwards clock *rewinds* the
+timestamps to `now`, which can slightly over-credit a later settle. That is exactly what
+`settleResources` has always done for settlement resources, the magnitude is bounded by the
+target composition and the Food cap, and diverging here would have been a new inconsistency
+rather than a fix.
+
+Gate: **485 tests** green (game-core, up from 458), build / typecheck clean, prettier and
+eslint clean on all 11 touched files.
+
+### M3c.2 — schemas: the six movement types, the six new report kinds, oasis live state, `protectedUntil` ✅ (2026-08-17)
+
+Persistence only, no behaviour: `MovementType` widened to all six (§9) and `ReportType` to ten
+of §15's eleven kinds (`settle`/`trade` wait for M3d, which produces them); `Movement` gained
+`toOasisId`, `loot` and `siegeTarget`; `Oasis` gained `defenders` / `loot.food` /
+`lastRegenAt` / `lastDefenderRegenAt` / `version` (§10); `Account` gained `protectedUntil`
+(§11), stamped by `SettlementsService.createSettlement` on an account's **first** settlement,
+inside the same transaction as the settlement write, reusing the `existingSettlements` array
+the Influence check had already fetched — no second count query.
+
+**The union widened once, not six times.** All six types land in this one pass even though
+`settle`/`trade` have no send path until M3d: it is the command layer, not the schema, that
+decides what a player can produce, and the schema only has to be permissive enough to store
+what the command layer is willing to write. This is exactly what M2's own comment on the field
+anticipated when it chose a union over a hardcoded literal.
+
+**`toSettlementId` is now optional, with the xor stated as an invariant, not a validator** —
+exactly one of `toSettlementId` / `toOasisId` is ever set, `target` (the coordinates) is
+always set either way. Enforcement sits at the command layer, matching this codebase's
+existing convention for cross-field invariants on these schemas (`BuildingSlot`'s "16 slots
+max … enforced by the application layer, not the schema").
+
+**Verified by the orchestrator.** Full gate from a `pnpm clean` tree: **766 tests** (game-core
+485, server **168** — up from 166, the two new integration tests — web 113), lint / typecheck /
+build green, and I read the whole stdout: no deprecations, no ignored build scripts, no
+warnings beyond the `ReportsRealtimePublisher` reconnection lines its own spec deliberately
+provokes. Prettier clean on every touched file. The two new tests run against the real Docker
+Mongo: a fresh account's first settlement stamps `protectedUntil` inside `[before + 72 h,
+after + 72 h]`, and all **135** freshly seeded NPC accounts carry no `protectedUntil` at all.
+
+**The "no migration" claim was checked, not assumed.** The dev database has no oases to read,
+so I inserted exactly what M2's `generateOases` writes — `{x, y, type}` and nothing else, as a
+**raw** insert bypassing the Mongoose schema — into a throwaway scratch database on the local
+Docker Mongo, read it back through the new schema, and dropped the database. It hydrates as
+`defenders: []`, `loot: {food: 0}`, `lastRegenAt: null`, `lastDefenderRegenAt: null`,
+`version: 0` — precisely the "never settled" shape M3c.1's `settleOasis` materialises at full
+target on first contact. Every M2-era oasis document is therefore valid as-is.
+
+**One trap recorded for M3c.3 / M3c.7, deliberately not fixed here.** `toMovementView`
+(`movements/movements.view.ts`) still does `toSettlementId: String(doc.toSettlementId)` into a
+non-optional `string` field, so an oasis-targeted movement would serialise the literal string
+`"undefined"`; `MovementArriveHandler` reads the same field the same way. Nothing can produce
+such a movement yet — no command writes `toOasisId` — so this is not a live defect, but the
+step that first sends a movement at an oasis owns widening the view (and the handler's target
+resolution) rather than discovering it in a raid report.
+
+### M3c.3 — send commands for `raid` / `assault` / `support`, §11 enforced at send ✅ (2026-08-17)
+
+`sendScouts` became `sendMovement`, widened to `scout | raid | assault | support` (§9);
+`settle`/`trade` still bounce off `errors.movement.unknownType` — M3d owns them. The DTO
+(`dto/send-movement.dto.ts`, renamed) gained an optional `siegeTarget`; `movements.util.ts`
+gained `isSendableMovementType` and `sumAttackPoints`; ten new i18n keys landed with their
+Russian strings, and `emptyUnits`/`insufficientTroops`/`targetIsOwnSettlement` stopped talking
+about "разведчиков" now that armies march through the same command.
+
+**The validation pipeline was extended in place, not rewritten** — the M2 ordering (origin
+settle → empty list → count shape → strip/merge → identity+role → availability → target) and
+its per-step reasoning comments survive intact, with the new checks slotted where their cost
+puts them: everything config-only (role legality, `atkPts`, `siegeTarget` shape) before the
+troop-availability read, and the two checks that need a second collection read (the target's
+owner, then the caller's own account) last.
+
+**Per-type rules as shipped.** Wildlife and Settlers are barred from every type this command
+produces (technical safety: wildlife is never player-ownable, Settlers are §13's `settle`
+payload). Scouts are barred from `raid`/`assault` (§9/§1) but allowed on `support` — §8 is
+explicit that stationed scouts count for the host's scout defence. Siege units may only ever
+leave on an `assault`. `support` may target the caller's own settlement (§8), so the
+own-settlement rejection is skipped for it alone. A `siegeTarget` is rejected outright on a
+non-assault, must be `'wall'` or a real building type, and is **required** when an assault
+actually carries siege units — never silently defaulted to `'wall'`, because §7 makes the
+target the attacker's decision. An assault with a valid `siegeTarget` but no siege units is
+accepted and the field is **not persisted**: there is no siege pass to aim it at.
+
+**§11 enforced at send, both halves, in one transaction.** A foreign movement — `scout`
+included — aimed at a still-protected account is rejected with `errors.movement.targetProtected`;
+a `raid`/`assault` at another account lifts the *caller's* own protection by setting
+`protectedUntil = now` (not `$unset`: the instant it lifted stays on the record, and
+`isBeginnerProtected` already treats `now === protectedUntil` as expired). Scouting and support
+deliberately do not lift it — M2c's onboarding loop is "train a scout, send it", and a rule
+that strips a new player's protection for following the tutorial is a trap, not a feature.
+
+**The temporary arrival guard.** `MovementArriveHandler` throws on any non-`scout` arrival,
+naming the movement and pointing at the §9 registry. I checked the systemic consequence myself
+rather than assuming it: `SchedulerService.recordFailure` pushes the failed event's `dueAt`
+forward with exponential backoff and `claimNextDueEvent` sorts by `dueAt` among `status: 'due'`
+events, so a permanently-failing raid arrival **cannot** head-of-line block anyone else's build
+queue or starvation tick — it retries, then lands in `failed` after `maxAttempts`, leaving the
+movement `outbound` and resolvable once M3c.4 lands.
+
+**Verification (orchestrator-run).** Full gate from a `pnpm clean` tree: **794 tests**
+(game-core 485, server **196** — up from 168 — web 113), lint / typecheck / build green,
+stdout read in full: no deprecations, no ignored build scripts, no warnings beyond the
+`ReportsRealtimePublisher` reconnection lines its own spec provokes. Prettier clean across
+every touched file.
+
+Beyond re-running the delivered suite I wrote a **throwaway probe suite of six cases the
+delivery does not cover**, ran it against the real app, and deleted it. All six pass:
+(1) protection is an *account* property — the protected account's **second** settlement is
+just as unattackable as its first; (2) a target whose `protectedUntil` is 1 ms in the past is
+attackable, matching §11's boundary convention; (3) a raid rejected for insufficient troops
+leaves the sender's `protectedUntil` **byte-identical** and writes no movement — the lift is
+inside the transaction, not before it; (4) an **assault** lifts protection too (§11 names both)
+and the account reads as unprotected immediately afterwards; (5) `awayTroops` is **unioned**
+with what was already in flight rather than overwritten (`brute 3 + 4 → 7`, `lookout 2`
+untouched, `biker 2` added) and a mixed Brute/Biker army travels at the **Brute's** speed;
+(6) the 90 s cancel works for an `assault` — status `returning`, every unit alive in
+`survivors`, the pending `movementArrive` deleted and exactly one `movementReturn` scheduled.
+One probe assertion failed on its first run and the failure was **mine, not the delivery's**:
+I asserted the event collection held only `movementReturn`, forgetting M3a.6's lazily-armed
+`starvationTick`; scoped to this feature's own event types, it passes.
+
+**Judgment calls reviewed and accepted.** (1) A new `errors.movement.unknownUnitType` key was
+minted — for `scout`, an unrecognised unit type is still reported as `notScout` (unchanged
+wire behaviour), but the other three types need a key of their own before indexing
+`config.units`. (2) `sumAttackPoints` was extracted so the `noAttackPower` rejection has direct
+unit coverage: it is unreachable through today's real catalogue, since every
+offense/defense/fast/siege unit has `attack > 0` — the guard stays anyway so a future 0-attack
+combat unit cannot slip a toothless army through. (3) `'wall'` is already a member of
+`BUILDING_TYPES`, so the explicit `'wall'` branch in the siege-target check is redundant as
+logic; it was kept because `combat/siege.ts` types the same value as `'wall' | BuildingType`
+and matching that reads clearer than a bare `isBuildingType`.
+
+**Recorded as debt, deliberately not fixed here.** `siegeTarget` is not exposed on
+`MovementView`, so the client cannot read back what an assault was ordered against — M3e's
+attack flow needs it, and it is one field on a pure reshape. Whether the defender may see it
+is already settled and is *not* a free addition: §12 gates the siege target behind Radio Tower
+level 5 on `GET /api/movements/incoming` (M3c.8), so it must be added to the owner's own view
+without leaking into the incoming payload's lower tiers.
+
+### M3c.4 — the per-type arrival-resolver registry + the raid/assault battle arrival ✅ (2026-08-17)
+
+§9's registry, built the way §9 asks for it: `MovementArriveHandler` shrank to the shared
+preamble (load the movement, apply §18.4's `status !== 'outbound'` replay guard, settle the
+target, dispatch) and now holds a `Map<MovementType, MovementArrivalResolver>` assembled at
+construction, throwing on a duplicate registration exactly as `EventHandlerRegistry` already
+does for event types. `ScoutArrivalResolver` is M2's scout logic moved out unchanged;
+`BattleArrivalResolver` is new and covers `raid` + `assault`; `support`/`settle`/`trade` keep
+the loud throw, its comment narrowed to name only those three.
+
+**The battle itself.** Defence is assembled per §5 from the target's own `troops` plus every
+`stationedTroops` contingent — keyed with the same `stationedContingentKey` helper
+`StarvationTickHandler` already uses for that array — and **never** from `awayTroops`. Wall
+level feeds `resolveBattle` directly; the roll is `battleRoll(world.seed, movementId)`, never
+`Math.random()`; the return leg's `dueAt` comes off `event.dueAt`, never the wall clock (§18).
+The two settlement writes are version-guarded and issued in **ascending `_id` order** (§18.3),
+decided at runtime from the actual ids rather than from "defender first" — the whole point of
+the rule is that two concurrent arrivals must never grab the same pair in opposite orders.
+
+**Reports (§15), all three kinds.** The attacker gets `raid`/`assault` with both armies, the
+defender's merged losses and `BattleResult`'s numeric internals; the defending owner gets
+`defense` with the same battle from their side plus which contingents took losses, addressed by
+real owner/origin ids; every supporter with casualties gets `supportLoss` carrying **only**
+their own contingent's losses. No loot or destruction fields anywhere — that is M3c.5, and the
+payloads are shaped so those fields are additions, not renames.
+
+**Verification (orchestrator-run).** Full gate from a `pnpm clean` tree: **801 tests**
+(game-core 485, server **203** — up from 196 — web 113), lint / typecheck / build green, stdout
+read in full, no new warnings.
+
+The delivery flagged a possible flake — the world seed is random per suite boot, so a marginal
+army could in principle have an assertion flipped by the ±5 % `combat.randomFactor`. I ran the
+movements integration suite **five times end to end: 52/52 every run**, so no assertion in it
+sits close enough to a threshold for the roll to matter. (The delivery's own one-in-ten failure
+was an `ECONNRESET` from the in-memory replica set, which I did not reproduce.)
+
+Then a **throwaway probe of four cases the delivery does not cover**, run against the real app,
+three consecutive clean runs, deleted afterwards:
+(1) **an undefended target** — the degenerate `defPts = 0` battle that is also the most common
+raid in a real round: resolves with a finite `x`, the attacker loses nothing, the defender
+still receives their `defense` report (§15's "both parties always");
+(2) **a defender whose entire army is in `awayTroops` and whose `troops` is empty** defends
+with **exactly 0** points and its in-transit army is untouched — §5's "troops that are away do
+not defend" isolated so that a defence accidentally summing `awayTroops` could not hide behind
+home troops;
+(3) **two consecutive raids on the same settlement compound** — the second meets the first's
+survivors, and I recomputed that second battle independently from `game-core` against the
+persisted state: the stored survivor count matches `resolveBattle` exactly, which tests the
+serialization property of §18 and the persistence in one shot;
+(4) **`supportLoss` leaks nothing** — its payload has exactly four keys (`movementId`,
+`hostSettlementId`, `at`, `losses`), carries no host losses and no battle internals, the
+reported loss plus the survivors still on the host document add back up to the contingent's
+original size, and the attacker's own report never names the supporter's account.
+
+**Judgment calls reviewed and accepted.** (1) The home contingent's key is the literal
+`'home'`; `stationedContingentKey` always produces `"<24-hex>:<24-hex>"`, so a collision is
+structurally impossible — checked, not taken on faith. (2) §18.3's ordering was applied to the
+two settlement writes only, with the movement write left last; the rule exists to prevent two
+multi-document commands from deadlocking on the same *pair*, and the movement document is never
+part of another arrival's pair. (3) The missing-target turn-around was factored into one shared
+`turnAroundOutboundMovement` helper instead of being duplicated per resolver — the brief said
+scout logic moves "verbatim", and this is the one place that was read as *identical mechanics*
+rather than identical bytes. The scout suite passes unchanged, which is the property that
+mattered. (4) A `raid`/`assault` whose target vanished now gets a report of its **own** type
+with `reason: 'targetNotFound'` rather than the scout's `scoutFailed` — §9 describes the
+turn-around *shape*, §15 assigns the report *type* per movement kind, and a raider receiving a
+`scoutFailed` would be a wire-level lie.
+
+**Still standing, still M3c.7's to fix:** the preamble resolves the target with
+`String(movement.toSettlementId)`, which becomes the literal `"undefined"` for an
+oasis-targeted movement. Unreachable today; the step that first sends a movement at an oasis
+owns it.
+
+### M3c.5a — the loot pass, end to end ✅ (2026-08-17)
+
+§6 wired from the defender's storeroom to the raider's warehouse. At arrival
+`BattleArrivalResolver` calls `resolveLoot` against the **already-settled** defender snapshot
+and deducts `taken` inside the *same* version-guarded write that already sets
+`troops`/`stationedTroops` — one write per document, `resources.lastCalcAt` untouched so
+production is not double-counted — and stores `movement.loot` only when something was actually
+taken. On the return leg `MovementReturnHandler` credits it, clamped per resource to the
+raider's **own** storage caps, and whatever overflows is lost rather than banked.
+
+**The return handler now settles the home settlement** (`settleSettlementDocUnchecked`, to
+`event.dueAt`) instead of loading it raw: loot is credited onto `resources.values` and clamped
+against caps, and doing either against a stale figure would be wrong. This also settles home on
+every *scout* and *support* return, which is a behaviour change beyond raids — accepted, and
+recorded here because it was not asked for: settling earlier is never incorrect (it is exactly
+what any command touching the settlement would have done a moment later), it is driven off
+`event.dueAt` rather than the wall clock, and no existing scout assertion moved.
+
+**The overflow is reported on the raid's own report, not a new one** — §15 allocates one
+`raid`/`assault` report per raid and §6 requires the loss to be visible, so the return handler
+adds `lootDelivered`/`lootLost` to the report the arrival already wrote, in the same
+transaction. A second report would double every raid in the player's inbox.
+
+**Verification (orchestrator-run).** Full gate from a `pnpm clean` tree: **810 tests**
+(game-core 485, server **212** — up from 203 — web 113), lint / typecheck / build green,
+prettier clean, no new warnings. The movements integration suite run **three more times end to
+end by me: 61/61 each** (the delivery reported five clean runs of its own).
+
+Then a **throwaway probe of five cases**, run against the real app, deleted afterwards:
+(1) **a replayed `movementReturn` driven through the real scheduler** — re-arming the very same
+event document as `due` and running the scheduler again, which is what a crash between the
+handler's commit and the event's `done` mark actually looks like — credits the loot **once**
+and brings the army home once. This is the one bug in this step that would have printed free
+resources, and the delivery's own replay test called the handler directly, which does not
+exercise the scheduler's claim/mark path;
+(2) **conservation across the whole round trip** — what the defender lost equals
+`lootDelivered + lootLost`, both non-negative, and equals `movement.loot`;
+(3) **a target with no Hidden Cache protects nothing** — level 0 is the special case whose raw
+curve would otherwise evaluate to ≈148 free protected units per resource for *every settlement
+in the world*; asserted live, against a victim deliberately stocked below that number, so the
+raid must come home non-empty and the report's `hiddenCacheProtection` must read exactly 0;
+(4) **a raid cancelled inside the 90 s window returns clean** — no loot, no arrival report, and
+the return handler's "no raid report found" throw does not fire (that throw is reachable
+precisely if loot were ever set without a report);
+(5) **the clamp uses the raider's own caps** — a raider parked just under the 4000 base cap
+ends exactly at cap with the remainder reported lost.
+
+Two of those five failed on their first run and **both failures were mine**: I seeded raiders
+with zero Food, so the starvation tick — correctly, per M3a.4 — ate the very army under test
+(an army in `awayTroops` still eats), and I assumed a level-1 settlement's storage cap was
+small when the base is 4000, so my "overflow" case had no overflow. Both fixtures were wrong,
+not the code; fixed and re-run three times clean.
+
+**One hardening item handed to M3c.5b.** The credit computes `delivered = min(cap, stored +
+loot) − stored`, which goes **negative** if `stored > cap` — a returning raid would then quietly
+shave the settlement back down to its cap and report a negative delivery. It is unreachable
+today (production halts at cap, NPC seeding fills to a ratio *of* cap, loot itself clamps), but
+M3c.5b is the step that makes a cap *shrink*, so its brief carries the requirement: clamp
+stored resources to the new cap inside the destruction transaction (§7 demands it anyway) and
+floor `delivered` at zero so the two rules cannot ever disagree.

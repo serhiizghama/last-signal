@@ -9,3 +9,5 @@ export * from './balance/index.js';
 export * from './map/index.js';
 export * from './units/index.js';
 export * from './scouting/index.js';
+export * from './combat/index.js';
+export * from './protection.js';

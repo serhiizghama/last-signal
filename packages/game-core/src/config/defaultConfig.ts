@@ -65,6 +65,37 @@ export const DEFAULT_CONFIG: GameConfig = {
   // field instead of `scouting.lossExponent`, with identical behaviour.
   combat: {
     lossExponent: 1.5,
+    // Added in M3b.1 (§5 step 4 of the M3 design record): the deterministic ±5% roll applied
+    // to atkPts before the loss curve, from `battleRoll` (hash(seed, movementId)). Draft
+    // number, sweepable by tools/sim like everything else in this file.
+    randomFactor: 0.05,
+  },
+  // Added in M3b.1 (§5 step 3 of the M3 design record): the Wall building's regular-battle
+  // defence multiplier — `wallFactor = defenseRatioPerLevel ** wallLevel`. Top-level and
+  // distinct from `buildings.wall` (the Wall's cost/level curve); see the doc comment on
+  // `GameConfig.wall` in types.ts. Draft ratio 1.03 -> L20 = 1.03^20 = 1.806x.
+  wall: {
+    defenseRatioPerLevel: 1.03,
+  },
+  // Added in M3b.2 (§6 of the M3 design record): the Hidden Cache's per-resource loot
+  // protection — `protection = base * ratio ** (level - 1)`, level 0 -> 0 (no cache, see
+  // `hiddenCacheProtection`). Draft base 200, ratio 1.35 -> L5 = 664.30125, L10 = 2978.749…
+  // A draft pair, sweepable by tools/sim like everything else in this file — §0 bound 2
+  // requires L5 to protect >= 8h of a day-7 Casual player's production, checked in M4.
+  hiddenCache: {
+    base: 200,
+    ratio: 1.35,
+  },
+  // Added in M3b.3 (§7 of the M3 design record): the siege pass's per-level resistance curve
+  // -- `cost = resistanceBase * resistanceRatio ** (level - 1)` -- and the Command Center's
+  // destruction floor (owner decision 4: a settlement can never be destroyed). Draft base 6,
+  // ratio 1.18 -> L10 costs 26.6127…, L7 costs 16.1973…, the §7 worked draft (10 Ram Trucks =
+  // 80 wall points vs a L10 wall -> L7, 68.28 spent, 11.72 discarded). A draft triple,
+  // sweepable by tools/sim in M4 like everything else in this file.
+  siege: {
+    resistanceBase: 6,
+    resistanceRatio: 1.18,
+    commandCenterFloor: 1,
   },
   // Added in M2b.3 (§6 of the M2 design record): the window after send during which a
   // movement can still be cancelled. 90s is the Kirilloid/T4 recall-window draft; a number,
@@ -80,6 +111,36 @@ export const DEFAULT_CONFIG: GameConfig = {
   // by tools/sim in M4 like everything else in this file.
   training: {
     buildingTimeRatio: 0.91,
+  },
+  // Added in M3c.1 (§10 of the M3 design record): the oasis wildlife garrison's target size —
+  // `base + floor(draw * rollRange)` per type, drawn in table order (Feral Dog, then Scavenger
+  // Gang) from one seeded stream keyed by `(seed, x, y)` — and its lazy regeneration. Draft
+  // rollRange is the *count of distinct values*, not the roll's max offset — see `OasisConfig`'s
+  // doc comment for the off-by-one this is guarding against. A draft set, sweepable by
+  // tools/sim in M4 like everything else in this file.
+  oasis: {
+    defenders: {
+      feralDog: { base: 12, rollRange: 13 }, // 12 + roll(0..12) -> 12..24 inclusive
+      scavengerGang: { base: 4, rollRange: 7 }, // 4 + roll(0..6) -> 4..10 inclusive
+    },
+    regen: {
+      defenderIntervalMs: 7_200_000, // 2h
+      foodPerHour: 120,
+      foodCap: 4000,
+    },
+  },
+  // Added in M3c.1 (§12 of the M3 design record): the Radio Tower level thresholds gating
+  // incoming-attack detail — level 0 (no tower at all) always shows that an attack is inbound,
+  // §12 is explicit about why. Draft kind 1, full 5, sweepable by tools/sim in M4.
+  radioTower: {
+    incomingTiers: { kind: 1, full: 5 },
+  },
+  // Added in M3c.1 (§11 of the M3 design record): beginner protection, plan-locked at 72h from
+  // the account's first settlement. A draft number in shape only — the *duration* is
+  // plan-locked, not up for tools/sim to retune, but it still lives in config per this file's
+  // "no formula/number hardcoded outside GameConfig" rule.
+  protection: {
+    durationMs: 259_200_000, // 72h
   },
   // Added in M2a.1 (§1, §2, §3 of the M2 design record): map geometry, derived terrain,
   // farm oases and the center-out expanding spawn policy. All draft numbers, sweepable by

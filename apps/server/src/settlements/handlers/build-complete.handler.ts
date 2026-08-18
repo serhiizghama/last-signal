@@ -74,18 +74,26 @@ export class BuildCompleteHandler implements EventHandler {
       level: b.level,
       slot: b.slot,
     }));
+    // §7 (M3c.5b, `docs/M3_DESIGN_DECISIONS.md`): "on completion the handler sets `level =
+    // min(item.targetLevel, currentLevel + 1)`, so a queued '→ L8' that finds the building at
+    // L5 [knocked down by a siege pass mid-build] delivers L6, not a free three-level jump."
+    // `completesAt` is unaffected (fixed at enqueue, M1) — only the level landed is capped.
+    // `currentLevel` is the building's level *right now* (0 when this is its first-ever
+    // build, including a first build queued before the building existed at all) — the exact
+    // same "0 when absent" `currentLevelOf` already uses elsewhere, so the two conventions
+    // can't drift.
     const existingIndex = buildings.findIndex((b) => b.type === item.type);
     if (existingIndex === -1) {
       buildings.push({
         id: randomUUID(),
         type: item.type,
-        level: item.targetLevel,
+        level: Math.min(item.targetLevel, 1),
         slot: nextFreeSlot(buildings),
       });
     } else {
       const existing = buildings[existingIndex];
       if (existing) {
-        existing.level = item.targetLevel;
+        existing.level = Math.min(item.targetLevel, existing.level + 1);
       }
     }
 

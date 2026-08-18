@@ -1,5 +1,17 @@
-import type { Resources, TroopCounts, UnitType } from '@last-signal/game-core';
+import type { GameConfig, Resources, TroopCounts, UnitType } from '@last-signal/game-core';
 import { UNIT_TYPES } from '@last-signal/game-core';
+import type { ClientSession, Model } from 'mongoose';
+
+import type { GameEventDocument } from '../schemas/event.schema';
+import type { MovementDocument } from '../schemas/movement.schema';
+import {
+  MOVEMENT_TYPE_ASSAULT,
+  MOVEMENT_TYPE_RAID,
+  MOVEMENT_TYPE_SCOUT,
+  MOVEMENT_TYPE_SUPPORT,
+} from '../schemas/movement.schema';
+import type { EventSchedulerService } from '../scheduler/event-scheduler.service';
+import { MOVEMENT_RETURN_EVENT_TYPE } from './movements.constants';
 
 export interface UnitCountEntry {
   unitType: string;
@@ -8,7 +20,7 @@ export interface UnitCountEntry {
 
 // The schema stores `unitType` as a plain `string` (same reason `Settlement.troops[].unitType`
 // does — see `isUnitType`'s own comment in `settlements.util.ts`) — this is the one narrowing
-// point `MovementsService.sendScouts` funnels every raw unit entry through before it reaches
+// point `MovementsService.sendMovement` funnels every raw unit entry through before it reaches
 // any `game-core` formula. Deliberately a local copy rather than importing
 // `settlements/settlements.util.ts` — that file is settlements-module-local by the same
 // "one small helper, not a cross-module dependency" convention `TrainCommandError`'s comment
@@ -18,7 +30,7 @@ export function isUnitType(value: string): value is UnitType {
 }
 
 // Sums duplicate `unitType` entries in a raw (client-supplied) unit list — two entries for
-// the same type in one `sendScouts` request isn't a meaningful error, just a redundant
+// the same type in one `sendMovement` request isn't a meaningful error, just a redundant
 // encoding of the same intent.
 export function mergeUnitCounts(units: ReadonlyArray<UnitCountEntry>): UnitCountEntry[] {
   const byType = new Map<string, number>();
@@ -26,6 +38,43 @@ export function mergeUnitCounts(units: ReadonlyArray<UnitCountEntry>): UnitCount
     byType.set(unitType, (byType.get(unitType) ?? 0) + count);
   }
   return [...byType.entries()].map(([unitType, count]) => ({ unitType, count }));
+}
+
+// The movement types `MovementsService.sendMovement` can actually produce (M3c.3, §9):
+// `scout` (M2, unchanged), `raid`, `assault`, `support`. `settle`/`trade` reached the schema
+// in M3c.2 (`MovementType` was widened for storage) but have no send path yet — M3d owns
+// them — so a DTO carrying either is rejected with `errors.movement.unknownType`, same as any
+// other unrecognised string. Same array-narrowing pattern as `isUnitType` above.
+const SENDABLE_MOVEMENT_TYPES = [
+  MOVEMENT_TYPE_SCOUT,
+  MOVEMENT_TYPE_RAID,
+  MOVEMENT_TYPE_ASSAULT,
+  MOVEMENT_TYPE_SUPPORT,
+] as const;
+
+export type SendableMovementType = (typeof SENDABLE_MOVEMENT_TYPES)[number];
+
+export function isSendableMovementType(value: string): value is SendableMovementType {
+  return (SENDABLE_MOVEMENT_TYPES as readonly string[]).includes(value);
+}
+
+// Total attack points a merged unit list would bring to a regular battle (§9 step 1,
+// `errors.movement.noAttackPower`) — extracted as its own pure function so the rejection can
+// be exercised by a direct unit test even though, at the time this was written, no catalogued
+// non-scout/wildlife/settler unit in `DEFAULT_CONFIG` actually has `attack: 0` (every
+// `offenseInfantry`/`defenseInfantry`/`fast`/`siege` unit does) — see the call site's own
+// comment in `movements.service.ts` for why the rejection is otherwise unreachable through
+// the real catalogue alone. Silently skips any entry that isn't a real unit type rather than
+// throwing: callers run this only after `isUnitType` has already rejected the whole command
+// over any unrecognised entry, so by the time this runs every entry is guaranteed real — this
+// guard is just what keeps the function honest as a standalone, independently-testable unit.
+export function sumAttackPoints(config: GameConfig, units: ReadonlyArray<UnitCountEntry>): number {
+  return units.reduce((total, { unitType, count }) => {
+    if (!isUnitType(unitType)) {
+      return total;
+    }
+    return total + config.units[unitType].attack * count;
+  }, 0);
 }
 
 // The per-unit-type shortfall `subtractUnitCounts` reports when `from` didn't hold enough of
@@ -112,4 +161,50 @@ export function toPlainResourceValues(values: Resources): Resources {
 // `departAt + 2 * (arriveAt - departAt)`, i.e. a symmetric round trip.
 export function computeReturnAt(departAt: number, turnAroundAt: number): number {
   return turnAroundAt + (turnAroundAt - departAt);
+}
+
+// The §9/§6 "target missing at arrival" turn-around, shared by every per-type arrival
+// resolver (`ScoutArrivalResolver`, `BattleArrivalResolver`) — see
+// `MovementArrivalResolver.resolveMissingTarget`'s own comment for why each resolver still
+// writes its own report first: only the report's shape/`type` differs per movement type, the
+// mechanics of turning the whole force around unharmed do not, so this is the one place that
+// mechanics is written. No `awayTroops` change (M3a.4, §3): nobody died, every unit is still
+// genuinely in transit, so this settlement should keep paying their Food exactly as it
+// already is.
+export async function turnAroundOutboundMovement(
+  movement: MovementDocument,
+  event: GameEventDocument,
+  eventScheduler: EventSchedulerService,
+  movementModel: Model<MovementDocument>,
+  session: ClientSession,
+): Promise<void> {
+  const returnAt = computeReturnAt(movement.departAt, event.dueAt);
+  const returnEvent = await eventScheduler.scheduleEvent(
+    {
+      type: MOVEMENT_RETURN_EVENT_TYPE,
+      dueAt: returnAt,
+      payload: { movementId: String(movement._id) },
+    },
+    session,
+  );
+
+  const updated = await movementModel.findOneAndUpdate(
+    { _id: movement._id, version: movement.version },
+    {
+      $set: {
+        status: 'returning',
+        survivors: movement.units.map((u) => ({ unitType: u.unitType, count: u.count })),
+        returnAt,
+        returnEventId: returnEvent._id,
+        version: movement.version + 1,
+      },
+    },
+    { session },
+  );
+  if (!updated) {
+    throw new Error(
+      `turnAroundOutboundMovement: version conflict applying movement ${String(movement._id)} ` +
+        '(missing target)',
+    );
+  }
 }

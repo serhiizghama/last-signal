@@ -169,6 +169,11 @@ export class StarvationTickHandler implements EventHandler {
     const result = resolveStarvation(this.config, {
       buildings,
       troops: toTroopCounts(settled.troops),
+      // Still fed in for the upkeep union (in-transit troops keep paying Food, M3a.4) — but
+      // `resolveStarvation` never kills from it (owner decision 2026-08-17, amending §4: the
+      // resurrect-on-return defect this closes, and the accepted trade, are documented on
+      // `StarvationInput.awayTroops`'s own doc comment in `game-core`). This settlement's
+      // `awayTroops` field is therefore never written below — it is simply left untouched.
       awayTroops: toTroopCounts(settled.awayTroops),
       stationed: contingents.map((c) => ({ key: c.key, troops: toTroopCounts(c.original.troops) })),
     });
@@ -226,7 +231,6 @@ export class StarvationTickHandler implements EventHandler {
       {
         $set: {
           troops: result.remaining.troops,
-          awayTroops: result.remaining.awayTroops,
           stationedTroops: remainingStationed,
           lastStarvationTickAt: event.dueAt,
           pendingStarvationEventId,
@@ -255,10 +259,7 @@ export class StarvationTickHandler implements EventHandler {
     session: ClientSession,
   ): Promise<void> {
     const killedStationed = result.killed.stationed.filter((s) => s.troops.length > 0);
-    const anyKilled =
-      result.killed.troops.length > 0 ||
-      result.killed.awayTroops.length > 0 ||
-      killedStationed.length > 0;
+    const anyKilled = result.killed.troops.length > 0 || killedStationed.length > 0;
     if (!anyKilled) {
       return;
     }
@@ -287,7 +288,6 @@ export class StarvationTickHandler implements EventHandler {
           settlementId,
           at,
           killedTroops: result.killed.troops,
-          killedAwayTroops: result.killed.awayTroops,
           killedStationed: stationedForOwner,
         },
       },

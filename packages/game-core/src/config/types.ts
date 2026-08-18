@@ -212,10 +212,53 @@ export interface GameConfig {
   scouting: ScoutingConfig;
   /** Regular-battle tuning shared by every combat resolution (M3 §0, §5). */
   combat: CombatConfig;
+  /**
+   * Added in M3b.1 (M3 §5 step 3): the Wall *building's* defence multiplier in regular battle
+   * resolution — top-level and distinct from `buildings.wall`, which is the Wall's cost/level
+   * curve definition (`BuildingDef`). Kept top-level (not nested under `buildings.wall`)
+   * because it is battle tuning, not a building-progression curve, and because §5 names it
+   * `wall.defenseRatioPerLevel` exactly. Later M3 steps add sibling top-level `hiddenCache`
+   * (§6 loot protection) and `siege` (§7 resistance curve) blocks the same way.
+   */
+  wall: WallConfig;
+  /**
+   * Added in M3b.2 (§6 of the M3 design record): the Hidden Cache *building's* per-resource
+   * loot protection — top-level and distinct from `buildings.hiddenCache`, which is the
+   * building's cost/level curve definition (`BuildingDef`), for the same reason `wall` above
+   * is kept top-level rather than nested under `buildings.wall`: this is raid tuning, not a
+   * building-progression curve.
+   */
+  hiddenCache: HiddenCacheConfig;
+  /**
+   * Added in M3b.3 (§7 of the M3 design record): the siege pass's per-level resistance curve
+   * and the Command Center floor — top-level and distinct from `buildings.wall` /
+   * `buildings.commandCenter` (their cost/level curve definitions), for the same reason
+   * `wall` and `hiddenCache` above are kept top-level rather than nested under `buildings.*`:
+   * this is siege/combat tuning, not a building-progression curve.
+   */
+  siege: SiegeConfig;
   /** Movement send/cancel tuning (M2 §6). */
   movement: MovementConfig;
   /** Per-building-level training-time tuning (M3 §2). */
   training: TrainingConfig;
+  /**
+   * Added in M3c.1 (§10 of the M3 design record): the oasis wildlife garrison's target size and
+   * lazy regeneration. Top-level and distinct from any `buildings.*` block — there is no oasis
+   * "building" — for the same reason `wall` / `hiddenCache` / `siege` above are kept top-level:
+   * this is raid/economy tuning, not a building-progression curve.
+   */
+  oasis: OasisConfig;
+  /**
+   * Added in M3c.1 (§12 of the M3 design record): the Radio Tower's incoming-attack detail
+   * tiers. Top-level and distinct from `buildings.radioTower` (its cost/level curve), for the
+   * same reason `oasis` above is kept top-level.
+   */
+  radioTower: RadioTowerConfig;
+  /**
+   * Added in M3c.1 (§11 of the M3 design record): beginner-protection duration, read from the
+   * account's first-settlement creation instant — no building governs it.
+   */
+  protection: ProtectionConfig;
   map: MapConfig;
 }
 
@@ -266,6 +309,104 @@ export interface CombatConfig {
    * already shipped for scouts, promoted here rather than duplicated (M3 §5).
    */
   lossExponent: number;
+  /**
+   * Added in M3b.1 (M3 §5 step 4): the deterministic ±5% roll applied to `atkPts` before the
+   * loss curve — `atkPts *= 1 + randomFactor * r`, `r` from `battleRoll` (`combat/roll.ts`).
+   * Draft 0.05. A number, sweepable by `tools/sim` like everything else in this file.
+   */
+  randomFactor: number;
+}
+
+/**
+ * Added in M3b.1 (M3 §5 step 3): the Wall building's battle-defence multiplier. See the
+ * `wall` field on `GameConfig` for why this lives top-level rather than under `buildings.wall`.
+ */
+export interface WallConfig {
+  /** `wallFactor = defenseRatioPerLevel ** wallLevel`, applied to `defPts`. Draft 1.03. */
+  defenseRatioPerLevel: number;
+}
+
+/**
+ * Added in M3b.2 (§6 of the M3 design record): the Hidden Cache building's per-resource loot
+ * protection. See the `hiddenCache` field on `GameConfig` for why this lives top-level rather
+ * than under `buildings.hiddenCache`.
+ */
+export interface HiddenCacheConfig {
+  /** Protection at level 1: `base * ratio ** (level - 1)`. Draft 200. Level 0 -> 0 (no cache). */
+  base: number;
+  /** Per-level protection multiplier. Draft 1.35 -> L5 = 664.30125, L10 = 2978.749…. */
+  ratio: number;
+}
+
+/**
+ * Added in M3b.3 (§7 of the M3 design record): the siege pass's resistance curve and the
+ * Command Center's destruction floor. See the `siege` field on `GameConfig` for why this
+ * lives top-level rather than under `buildings.wall` / `buildings.commandCenter`.
+ */
+export interface SiegeConfig {
+  /** Cost of knocking level 1 off any building or the wall: `base * ratio ** (level - 1)`. Draft 6. */
+  resistanceBase: number;
+  /** Per-level resistance multiplier. Draft 1.18 -> L10 costs 26.6127…, L7 costs 16.1973…. */
+  resistanceRatio: number;
+  /** The Command Center can never be knocked below this level (owner decision 4). Draft 1. */
+  commandCenterFloor: number;
+}
+
+/**
+ * Added in M3c.1 (§10 of the M3 design record): the oasis wildlife garrison's target size and
+ * its lazy regeneration. See `GameConfig.oasis` for why this lives top-level.
+ */
+export interface OasisConfig {
+  /**
+   * Target wildlife garrison, rolled deterministically per oasis from the world seed and its
+   * coordinates (`oasisTargetDefenders`, §10). `base + floor(draw * rollRange)` encodes §10's
+   * "`12 + roll(0..12)`" shape — **`rollRange` is the number of distinct values the roll can
+   * land on, not the maximum offset.** `12 + roll(0..12)` draws 13 distinct values (12..24
+   * inclusive), so it is `rollRange: 13`, not `rollRange: 12`; reading it as 12 is the natural
+   * mistake here and would silently narrow every oasis garrison in the world by dropping its
+   * top value. Likewise Scavenger Gangs' `4 + roll(0..6)` is `rollRange: 7`, not 6.
+   */
+  defenders: {
+    /** Draft base 12, rollRange 13 -> 12..24 Feral Dogs inclusive. */
+    feralDog: { base: number; rollRange: number };
+    /** Draft base 4, rollRange 7 -> 4..10 Scavenger Gangs inclusive. */
+    scavengerGang: { base: number; rollRange: number };
+  };
+  /** Lazy regeneration (§10), settled the same way settlement resources already are (M1 §4). */
+  regen: {
+    /**
+     * One unit of EACH defender type credited per this interval, up to the target composition —
+     * never past it. A type already at target gains nothing. Draft 2h in ms.
+     */
+    defenderIntervalMs: number;
+    /** Food added to the lootable pool per hour; fractional accrual, like every other rate. Draft 120. */
+    foodPerHour: number;
+    /** Hard cap on the lootable Food pool. Draft 4000. */
+    foodCap: number;
+  };
+}
+
+/**
+ * Added in M3c.1 (§12 of the M3 design record): the Radio Tower level thresholds that gate
+ * incoming-attack detail. See `GameConfig.radioTower` for why this lives top-level.
+ */
+export interface RadioTowerConfig {
+  /**
+   * Minimum Radio Tower level for the `'kind'` and `'full'` incoming-detail tiers
+   * (`incomingDetailTier`, §12). The base `'existence'` tier — that an attack is inbound, its
+   * arrival time, and its origin tile + owner — is never gated by any level, including 0; these
+   * two thresholds only decide when the tiers *above* it unlock. Draft kind 1, full 5.
+   */
+  incomingTiers: { kind: number; full: number };
+}
+
+/**
+ * Added in M3c.1 (§11 of the M3 design record): beginner-protection duration. See
+ * `GameConfig.protection` for why this lives top-level.
+ */
+export interface ProtectionConfig {
+  /** How long protection holds from the account's first settlement being created (§11). Draft 72h in ms. */
+  durationMs: number;
 }
 
 /**

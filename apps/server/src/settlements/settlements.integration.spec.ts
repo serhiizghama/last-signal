@@ -840,6 +840,90 @@ describe('Settlements (integration)', () => {
     expect(promoted.completesAt).not.toBeNull();
   });
 
+  describe('M3c.5b: the build-queue rule — a knocked building does not get a free jump (§7)', () => {
+    // `docs/M3_DESIGN_DECISIONS.md` §7: "on completion the handler sets `level =
+    // min(item.targetLevel, currentLevel + 1)`, so a queued '→ L8' that finds the building at
+    // L5 [knocked down by a siege pass mid-build] delivers L6, not a free three-level jump."
+    // The siege pass itself is `BattleArrivalResolver`'s own concern
+    // (`movements.integration.spec.ts`'s M3c.5b suite) — this suite only proves
+    // `BuildCompleteHandler` honours the rule regardless of *why* the building's level moved
+    // between enqueue and completion, so a direct Mongoose downgrade stands in for "a siege
+    // pass landed mid-build" without needing a real battle.
+    //
+    // Maxed Greenhouse Farm headroom, not `foodSafeBuildings()`: that helper is only proven
+    // safe for a *fresh* build up to `SAFETY_MAX_TARGET_LEVEL` (4) — these fixtures queue an
+    // existing L7 building up to L8, well past that margin.
+    function siegeRuleBuildings(type: BuildingType): BuildingLevels {
+      return [
+        { type: 'commandCenter', level: 1 },
+        { type: 'greenhouseFarm', level: config.buildings.greenhouseFarm.maxLevel },
+        { type, level: 7 },
+      ];
+    }
+
+    it('a queued upgrade to L8 whose building sits at L5 when the event fires delivers L6, not L8', async () => {
+      const { accountId, cookie } = await createGuestSession();
+      const type = noPrereqTypes.find((t) => t !== 'greenhouseFarm');
+      expect(type).toBeDefined();
+      if (!type) throw new Error('unreachable');
+
+      const settlementId = await seedSettlement(accountId, {
+        buildings: siegeRuleBuildings(type).map((b) => ({ ...b })) as Array<{
+          type: BuildingType;
+          level: number;
+        }>,
+        resources: ABUNDANT_RESOURCES,
+      });
+
+      const buildResponse = await postBuild(settlementId, cookie, type);
+      expect(buildResponse.status).toBe(200);
+      const queueItem = buildResponse.body.buildQueue[0];
+      expect(queueItem.targetLevel).toBe(8);
+
+      // Stands in for a siege pass knocking the building down mid-build — `completesAt` is
+      // fixed at enqueue (M1) and is deliberately left untouched here; only the level landed
+      // at completion should be affected.
+      await settlementModel.updateOne(
+        { _id: settlementId, 'buildings.type': type },
+        { $set: { 'buildings.$.level': 5 } },
+      );
+
+      await completeQueueItem(queueItem.id);
+
+      const after = await settlementModel.findById(settlementId);
+      const built = after?.buildings.find((b) => b.type === type);
+      expect(built?.level).toBe(6);
+      expect(after?.buildQueue).toHaveLength(0);
+    });
+
+    it('an ordinary upgrade — nothing destroyed meanwhile — still delivers its exact target level', async () => {
+      const { accountId, cookie } = await createGuestSession();
+      const type = noPrereqTypes.find((t) => t !== 'greenhouseFarm');
+      expect(type).toBeDefined();
+      if (!type) throw new Error('unreachable');
+
+      const settlementId = await seedSettlement(accountId, {
+        buildings: siegeRuleBuildings(type).map((b) => ({ ...b })) as Array<{
+          type: BuildingType;
+          level: number;
+        }>,
+        resources: ABUNDANT_RESOURCES,
+      });
+
+      const buildResponse = await postBuild(settlementId, cookie, type);
+      expect(buildResponse.status).toBe(200);
+      const queueItem = buildResponse.body.buildQueue[0];
+      expect(queueItem.targetLevel).toBe(8);
+
+      await completeQueueItem(queueItem.id);
+
+      const after = await settlementModel.findById(settlementId);
+      const built = after?.buildings.find((b) => b.type === type);
+      expect(built?.level).toBe(8);
+      expect(after?.buildQueue).toHaveLength(0);
+    });
+  });
+
   it('unauthenticated: every settlement route rejects a request with no session cookie', async () => {
     const { accountId } = await createGuestSession();
     const settlementId = await seedSettlement(accountId);
@@ -1703,20 +1787,22 @@ describe('Settlements (integration)', () => {
       expect(state.buildings.map((b) => ({ type: b.type, level: b.level }))).toEqual(buildings);
     });
 
-    it('guests first: a stationed contingent is consumed before awayTroops and before home troops', async () => {
+    it('guests first: a stationed contingent is consumed before home troops, and awayTroops is never touched (owner decision 2026-08-17, §4)', async () => {
       const { accountId, cookie } = await createGuestSession();
       const supporter = await createGuestSession();
 
-      const homeCount = 4;
-      const level = farmLevelCovering(homeCount * WEAK_UPKEEP + 5 * WEAK_UPKEEP);
+      // A big home-troops buffer absorbs whatever the small stationed contingent doesn't
+      // cover — awayTroops is no longer a kill target at all (owner decision 2026-08-17), so
+      // it can no longer play that role; home troops does instead.
+      const homeCount = 1000;
       const buildings: BuildingLevels = [
         { type: 'commandCenter', level: 1 },
-        { type: 'greenhouseFarm', level },
+        { type: 'greenhouseFarm', level: 1 },
       ];
       const troops = [{ unitType: WEAK, count: homeCount }];
-      // A big awayTroops buffer absorbs whatever the small stationed contingent doesn't
-      // cover, so "home troops untouched" below isn't a coincidence of the chosen numbers.
-      const awayTroops = [{ unitType: WEAK, count: 1000 }];
+      // Adds real upkeep to the deficit but must come through this tick completely untouched —
+      // its size is deliberately unrelated to how much dies elsewhere.
+      const awayTroops = [{ unitType: WEAK, count: 7 }];
       const fromSettlementId = new Types.ObjectId();
       const stationedTroops = [
         {
@@ -1738,12 +1824,11 @@ describe('Settlements (integration)', () => {
         ],
       });
       // Sanity on the fixture itself, mirroring `starvation.test.ts`'s own analogous case.
-      expect(expected.remaining.troops).toEqual(troops);
       expect(expected.killed.stationed[0]?.troops).toEqual(stationedTroops[0]?.troops);
-      const expectedAwaySurvivors =
-        expected.remaining.awayTroops.find((t) => t.unitType === WEAK)?.count ?? 0;
-      expect(expectedAwaySurvivors).toBeGreaterThan(0);
-      expect(expectedAwaySurvivors).toBeLessThan(1000);
+      const expectedHomeSurvivors =
+        expected.remaining.troops.find((t) => t.unitType === WEAK)?.count ?? 0;
+      expect(expectedHomeSurvivors).toBeGreaterThan(0);
+      expect(expectedHomeSurvivors).toBeLessThan(homeCount);
 
       const settlementId = await starvingSettlement(accountId, {
         buildings,
@@ -1759,9 +1844,13 @@ describe('Settlements (integration)', () => {
       const state = await settlementModel.findById(settlementId);
       expect(state).not.toBeNull();
       if (!state) throw new Error('unreachable');
-      expect(state.troops.map((t) => ({ unitType: t.unitType, count: t.count }))).toEqual(troops);
+      expect(state.troops.map((t) => ({ unitType: t.unitType, count: t.count }))).toEqual(
+        expected.remaining.troops,
+      );
+      // awayTroops is never a kill target: the handler leaves it byte-for-byte untouched, no
+      // matter how much of the deficit it caused.
       expect(state.awayTroops.map((t) => ({ unitType: t.unitType, count: t.count }))).toEqual(
-        expected.remaining.awayTroops,
+        awayTroops,
       );
       // The contingent lost every unit — dropped from the document entirely, not left behind
       // as an empty entry.
@@ -1803,7 +1892,7 @@ describe('Settlements (integration)', () => {
       expect(ownerReport).toBeDefined();
       if (!ownerReport) throw new Error('unreachable');
       expect(ownerReport.payload['killedTroops']).toEqual(expected.killed.troops);
-      expect(ownerReport.payload['killedAwayTroops']).toEqual(expected.killed.awayTroops);
+      expect(ownerReport.payload).not.toHaveProperty('killedAwayTroops');
       const ownerStationedPayload = ownerReport.payload['killedStationed'] as Array<
         Record<string, unknown>
       >;

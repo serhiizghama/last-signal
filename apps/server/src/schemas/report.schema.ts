@@ -6,16 +6,48 @@ import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 // with zero survivors (or a missing target — see `MovementArriveHandler`'s own comment),
 // and the defender's counter-report when detected — plus `starvation` (M3a.6,
 // `docs/M3_DESIGN_DECISIONS.md` §4/§15): written to a settlement's owner and to each
-// supporter whose stationed contingent lost units on an hourly starvation tick. The
-// remaining M3 report kinds (`raid`/`assault`/`defense`/`supportLoss`/`oasisRaid`/`settle`/
-// `trade`/`buildingDestroyed`, §15) land with their own features.
-export type ReportType = 'scout' | 'scoutFailed' | 'scoutDetected' | 'starvation';
-const REPORT_TYPES: ReportType[] = ['scout', 'scoutFailed', 'scoutDetected', 'starvation'];
+// supporter whose stationed contingent lost units on an hourly starvation tick. M3c
+// (§15) adds the six kinds combat/oases produce: `raid`/`assault` (written for the
+// attacker), `defense` (the same battle, written for the defending settlement's owner),
+// `supportLoss` (written to a supporter whose stationed contingent took casualties),
+// `oasisRaid` (an oasis raid's own report — defenders met, losses, Food taken),
+// and `buildingDestroyed` (written to the defender when a siege pass knocks a level off).
+// `settle` and `trade` are the only two of §15's eleven kinds still missing — they land
+// with M3d, alongside the founding and market flows that produce them.
+export type ReportType =
+  | 'scout'
+  | 'scoutFailed'
+  | 'scoutDetected'
+  | 'starvation'
+  | 'raid'
+  | 'assault'
+  | 'defense'
+  | 'supportLoss'
+  | 'oasisRaid'
+  | 'buildingDestroyed';
+const REPORT_TYPES: ReportType[] = [
+  'scout',
+  'scoutFailed',
+  'scoutDetected',
+  'starvation',
+  'raid',
+  'assault',
+  'defense',
+  'supportLoss',
+  'oasisRaid',
+  'buildingDestroyed',
+];
 
 export const REPORT_TYPE_SCOUT: ReportType = 'scout';
 export const REPORT_TYPE_SCOUT_FAILED: ReportType = 'scoutFailed';
 export const REPORT_TYPE_SCOUT_DETECTED: ReportType = 'scoutDetected';
 export const REPORT_TYPE_STARVATION: ReportType = 'starvation';
+export const REPORT_TYPE_RAID: ReportType = 'raid';
+export const REPORT_TYPE_ASSAULT: ReportType = 'assault';
+export const REPORT_TYPE_DEFENSE: ReportType = 'defense';
+export const REPORT_TYPE_SUPPORT_LOSS: ReportType = 'supportLoss';
+export const REPORT_TYPE_OASIS_RAID: ReportType = 'oasisRaid';
+export const REPORT_TYPE_BUILDING_DESTROYED: ReportType = 'buildingDestroyed';
 
 export type ReportDocument = HydratedDocument<Report>;
 

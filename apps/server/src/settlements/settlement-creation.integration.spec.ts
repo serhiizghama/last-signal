@@ -139,6 +139,28 @@ describe('Settlement creation (integration)', () => {
     expect(response.body.resources.values).toEqual(STARTING_RESOURCES);
   });
 
+  // M3c beginner protection (`docs/M3_DESIGN_DECISIONS.md` §11): a brand-new account's first
+  // settlement stamps `account.protectedUntil` to `now + protection.durationMs`, inside the
+  // same transaction as the settlement write.
+  it('creating a first settlement stamps account.protectedUntil to now + protection.durationMs', async () => {
+    const { cookie, accountId } = await createGuestSession();
+
+    const before = Date.now();
+    const response = await createSettlement(cookie);
+    const after = Date.now();
+    expect(response.status).toBe(201);
+
+    const account = await accountModel.findById(accountId);
+    expect(account).not.toBeNull();
+    expect(account!.protectedUntil).toBeDefined();
+    expect(account!.protectedUntil).toBeGreaterThanOrEqual(
+      before + DEFAULT_CONFIG.protection.durationMs,
+    );
+    expect(account!.protectedUntil).toBeLessThanOrEqual(
+      after + DEFAULT_CONFIG.protection.durationMs,
+    );
+  });
+
   it('a second settlement attempt is rejected with errors.settlement.limitReached', async () => {
     const { cookie } = await createGuestSession();
 

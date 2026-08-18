@@ -54,8 +54,39 @@ describe('starvationOrder', () => {
     expect(firstSettlerIndex).toBeGreaterThan(lastNonSettlerIndex);
   });
 
-  it('is non-decreasing by combat weight across the non-settler prefix', () => {
-    const order = starvationOrder(config).filter((t) => config.units[t].role !== 'settler');
+  it('sorts every siege unit after every non-siege, non-settler unit and before every settler (owner decision 2026-08-17, §4)', () => {
+    const order = starvationOrder(config);
+    const indexOf = (unitType: string) => order.findIndex((t) => t === unitType);
+
+    const nonSiegeNonSettlerIndices = order
+      .map((t, i) =>
+        config.units[t].role === 'siege' || config.units[t].role === 'settler' ? -1 : i,
+      )
+      .filter((i) => i >= 0);
+    const siegeIndices = order
+      .map((t, i) => (config.units[t].role === 'siege' ? i : -1))
+      .filter((i) => i >= 0);
+    const settlerIndices = order
+      .map((t, i) => (config.units[t].role === 'settler' ? i : -1))
+      .filter((i) => i >= 0);
+
+    expect(siegeIndices.length).toBeGreaterThan(0);
+    expect(Math.min(...siegeIndices)).toBeGreaterThan(Math.max(...nonSiegeNonSettlerIndices));
+    expect(Math.min(...settlerIndices)).toBeGreaterThan(Math.max(...siegeIndices));
+
+    // All three siege units by name, per the brief.
+    expect(indexOf('ramTruck')).toBeGreaterThan(Math.max(...nonSiegeNonSettlerIndices));
+    expect(indexOf('railSling')).toBeGreaterThan(Math.max(...nonSiegeNonSettlerIndices));
+    expect(indexOf('ballistaWagon')).toBeGreaterThan(Math.max(...nonSiegeNonSettlerIndices));
+    expect(indexOf('ramTruck')).toBeLessThan(Math.min(...settlerIndices));
+    expect(indexOf('railSling')).toBeLessThan(Math.min(...settlerIndices));
+    expect(indexOf('ballistaWagon')).toBeLessThan(Math.min(...settlerIndices));
+  });
+
+  it('is non-decreasing by combat weight across the non-siege, non-settler prefix', () => {
+    const order = starvationOrder(config).filter(
+      (t) => config.units[t].role !== 'settler' && config.units[t].role !== 'siege',
+    );
     const weights = order.map((t) => {
       const def = config.units[t];
       return def.attack + def.defInfantry + def.defCavalry;
@@ -119,8 +150,8 @@ describe('resolveStarvation', () => {
     const result = resolveStarvation(config, { buildings, troops, awayTroops, stationed });
     expect(result.resolved).toBe(true);
     expect(result.netFoodPerHourAfter).toBe(0);
-    expect(result.killed).toEqual({ troops: [], awayTroops: [], stationed: [] });
-    expect(result.remaining).toEqual({ troops: [], awayTroops: [], stationed: [] });
+    expect(result.killed).toEqual({ troops: [], stationed: [] });
+    expect(result.remaining).toEqual({ troops: [], stationed: [] });
   });
 
   it('kills the weakest type first, only as many as needed to reach net >= 0', () => {
@@ -164,25 +195,25 @@ describe('resolveStarvation', () => {
   });
 
   it('starves stationed guests before home troops, and can drain a contingent to empty', () => {
-    const homeCount = 4;
-    // Cover home troops plus a comfortable margin of slack: without it, the deficit left for
-    // awayTroops to absorb would generically not be an exact multiple of a unit's upkeep, and
-    // `ceil` would round the kill count back up to "all of them" regardless of how many exist.
-    const level = farmLevelCovering(homeCount * uWeak + 5 * uWeak);
-    const buildings: BuildingLevels = [{ type: 'greenhouseFarm', level }];
+    // A big home-troops buffer absorbs whatever the small stationed contingent doesn't cover,
+    // so the assertion "some home troops survive" isn't a coincidence of the numbers chosen.
+    // (Pre owner-decision-2026-08-17 this test used `awayTroops` as that buffer; awayTroops is
+    // no longer a kill target at all, so home troops takes over that role here — see the two
+    // dedicated `awayTroops` tests below for the exemption itself.)
+    const homeCount = 1000;
+    const guestCount = 2;
+    const buildings: BuildingLevels = [{ type: 'greenhouseFarm', level: 1 }];
+    const headroom = calcNetFoodPerHour(config, buildings, []);
     const troops: TroopCounts = [{ unitType: WEAK, count: homeCount }];
-    // A big awayTroops buffer absorbs whatever the small stationed contingent doesn't cover,
-    // so the assertion "troops is untouched" isn't a coincidence of the numbers chosen.
-    const awayTroops: TroopCounts = [{ unitType: WEAK, count: 1000 }];
     const stationed: StarvationContingent[] = [
-      { key: 'guest', troops: [{ unitType: WEAK, count: 2 }] },
+      { key: 'guest', troops: [{ unitType: WEAK, count: guestCount }] },
     ];
+    // Sanity precondition: headroom is nowhere near enough to cover the combined upkeep, so
+    // the deficit is guaranteed to consume the (tiny) guest fully and still spill into home
+    // troops — proving the kill order, rather than the guest happening to cover everything.
+    expect(headroom).toBeLessThan(homeCount * uWeak);
 
-    const result = resolveStarvation(config, { buildings, troops, awayTroops, stationed });
-
-    // Home troops are completely untouched.
-    expect(result.remaining.troops).toEqual(troops);
-    expect(result.killed.troops).toEqual([]);
+    const result = resolveStarvation(config, { buildings, troops, awayTroops: [], stationed });
 
     // The stationed contingent bled (fully, being tiny relative to the deficit) but survives
     // as a {key, troops: []} record rather than being dropped.
@@ -191,31 +222,63 @@ describe('resolveStarvation', () => {
     ]);
     expect(result.remaining.stationed).toEqual([{ key: 'guest', troops: [] }]);
 
-    // awayTroops took the rest of the deficit, partially.
-    const awaySurvivors = result.remaining.awayTroops.find((t) => t.unitType === WEAK)?.count ?? 0;
-    expect(awaySurvivors).toBeGreaterThan(0);
-    expect(awaySurvivors).toBeLessThan(1000);
+    // Home troops absorbed whatever the guest's 2 units didn't cover — some died, some didn't.
+    const homeSurvivors = result.remaining.troops.find((t) => t.unitType === WEAK)?.count ?? 0;
+    expect(homeSurvivors).toBeGreaterThan(0);
+    expect(homeSurvivors).toBeLessThan(homeCount);
 
     expect(result.netFoodPerHourAfter).toBeGreaterThanOrEqual(0);
   });
 
-  it('starves awayTroops before home troops', () => {
-    const homeCount = 4;
-    // See the analogous comment in the "stationed guests" test above for why a real margin
-    // (not just +1) is needed here.
-    const level = farmLevelCovering(homeCount * uWeak + 5 * uWeak);
-    const buildings: BuildingLevels = [{ type: 'greenhouseFarm', level }];
-    const troops: TroopCounts = [{ unitType: WEAK, count: homeCount }];
+  it('never kills awayTroops, even when they are the only troops present and the deficit is large (owner decision 2026-08-17, §4)', () => {
+    // Command Center: real upkeep, zero production — the deficit can only ever be closed by
+    // killing something (§4, "buildings never starve"). Here nothing killable exists at all:
+    // `troops` and `stationed` are both empty, so `awayTroops` is the only lever left, and it
+    // must not move.
+    const buildings: BuildingLevels = [{ type: 'commandCenter', level: 1 }];
     const awayTroops: TroopCounts = [{ unitType: WEAK, count: 500 }];
 
+    const result = resolveStarvation(config, { buildings, troops: [], awayTroops, stationed: [] });
+
+    expect(result.killed.troops).toEqual([]);
+    expect(result.killed.stationed).toEqual([]);
+    expect(result.remaining.troops).toEqual([]);
+
+    // If awayTroops were killable, 500 units would trivially clear the Command Center's small
+    // upkeep and `resolved` would be `true`. It stays `false` — proof nothing was killed.
+    expect(result.resolved).toBe(false);
+    expect(result.netFoodPerHourAfter).toBeLessThan(0);
+  });
+
+  it('in-transit troops still raise the deficit — home troops are killed to pay for it — proving awayTroops stayed in the upkeep union', () => {
+    const homeCount = 50;
+    // Buildings alone comfortably cover home troops' own upkeep, with real headroom to spare.
+    const level = farmLevelCovering(homeCount * uWeak + 5 * uWeak);
+    const buildings: BuildingLevels = [{ type: 'greenhouseFarm', level }];
+    const headroom = calcNetFoodPerHour(config, buildings, []);
+    const troops: TroopCounts = [{ unitType: WEAK, count: homeCount }];
+
+    // Baseline: with no awayTroops, the whole home garrison survives untouched.
+    const baseline = resolveStarvation(config, {
+      buildings,
+      troops,
+      awayTroops: [],
+      stationed: [],
+    });
+    expect(baseline.resolved).toBe(true);
+    expect(baseline.killed.troops).toEqual([]);
+
+    // A large in-transit force's upkeep alone pushes the same settlement negative. Since
+    // awayTroops itself can never be killed (previous test), the only way to pay for its
+    // upkeep is by killing home troops.
+    const awayCount = Math.ceil((headroom - homeCount * uWeak) / uWeak) + 20;
+    const awayTroops: TroopCounts = [{ unitType: WEAK, count: awayCount }];
     const result = resolveStarvation(config, { buildings, troops, awayTroops, stationed: [] });
 
-    expect(result.remaining.troops).toEqual(troops);
-    expect(result.killed.troops).toEqual([]);
-
-    const awaySurvivors = result.remaining.awayTroops.find((t) => t.unitType === WEAK)?.count ?? 0;
-    expect(awaySurvivors).toBeGreaterThan(0);
-    expect(awaySurvivors).toBeLessThan(500);
+    expect(result.killed.troops.length).toBeGreaterThan(0);
+    const homeSurvivors = result.remaining.troops.find((t) => t.unitType === WEAK)?.count ?? 0;
+    expect(homeSurvivors).toBeLessThan(homeCount);
+    expect(result.resolved).toBe(true);
     expect(result.netFoodPerHourAfter).toBeGreaterThanOrEqual(0);
   });
 
@@ -260,14 +323,19 @@ describe('resolveStarvation', () => {
     expect(bSurvivors).toBeLessThan(bigCount);
   });
 
-  it('reports resolved: false with every troop list empty when even killing everything is not enough', () => {
+  it('reports resolved: false with every killable troop list empty when even killing everything killable is not enough', () => {
     // Command Center has upkeep but no production (§4): its Food cost can never be closed by
-    // killing troops, no matter how many die — buildings never starve.
+    // killing troops, no matter how many die — buildings never starve. This single forward
+    // pass over a fixed target list (troops + stationed) terminates either way — completing
+    // synchronously here is itself evidence there is no spin, alongside the code's own
+    // finite-target-list guarantee (see `resolveStarvation`'s doc comment).
     const buildings: BuildingLevels = [{ type: 'commandCenter', level: 1 }];
     const buildingUpkeep = calcFoodUpkeepPerHour(config, buildings);
     expect(buildingUpkeep).toBeGreaterThan(0);
 
     const troops: TroopCounts = [{ unitType: WEAK, count: 2 }];
+    // awayTroops adds its own upkeep to the deficit but, being exempt from killing, is never
+    // among what dies — its upkeep is baked permanently into the unresolved residual below.
     const awayTroops: TroopCounts = [{ unitType: WEAK, count: 2 }];
     const stationed: StarvationContingent[] = [
       { key: 'guest', troops: [{ unitType: WEAK, count: 2 }] },
@@ -278,13 +346,13 @@ describe('resolveStarvation', () => {
     expect(result.resolved).toBe(false);
     expect(result.remaining).toEqual({
       troops: [],
-      awayTroops: [],
       stationed: [{ key: 'guest', troops: [] }],
     });
     expect(result.killed.troops).toEqual(troops);
-    expect(result.killed.awayTroops).toEqual(awayTroops);
     expect(result.killed.stationed).toEqual(stationed);
-    expect(result.netFoodPerHourAfter).toBeCloseTo(-buildingUpkeep, 10);
+    // Everything killable is dead; what's left is the Command Center's upkeep PLUS the
+    // never-killable awayTroops' upkeep.
+    expect(result.netFoodPerHourAfter).toBeCloseTo(-(buildingUpkeep + 2 * uWeak), 10);
   });
 
   it('does not mutate its inputs', () => {

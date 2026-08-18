@@ -2,20 +2,34 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 
 import { GRID_MAX, GRID_MIN } from './grid.constants';
+import type { ResourceAmounts } from './settlement.schema';
 
-// M2 ships exactly one movement type (`docs/M2_DESIGN_DECISIONS.md` §6) — `settle`,
-// `trade`/merchants and `support` are M3. A union (not a hardcoded literal on the schema) so
-// M3 widens this array rather than changing the field's shape.
-export type MovementType = 'scout';
-const MOVEMENT_TYPES: MovementType[] = ['scout'];
+// M2 shipped exactly one movement type (`scout`). M3 widens the union to the full six the
+// plan always intended (`docs/M3_DESIGN_DECISIONS.md` §9): `raid`, `assault`, `support`,
+// `settle`, `trade`. This was the whole point of a union rather than a hardcoded literal on
+// the schema (M2's own comment on this field said so). Widening the *schema* enum here does
+// not make any of the new five sendable today — `settle`/`trade` have no send path until
+// M3d, and even `raid`/`assault`/`support` (M3c) only become reachable once their own
+// command services exist. It is the command layer, not this schema, that gates which types
+// a player can actually produce; the schema only needs to be permissive enough to store
+// whatever the command layer is willing to write, which is why every type lands in one pass
+// instead of being widened six times.
+export type MovementType = 'scout' | 'raid' | 'assault' | 'support' | 'settle' | 'trade';
+const MOVEMENT_TYPES: MovementType[] = ['scout', 'raid', 'assault', 'support', 'settle', 'trade'];
 export const MOVEMENT_TYPE_SCOUT: MovementType = 'scout';
+export const MOVEMENT_TYPE_RAID: MovementType = 'raid';
+export const MOVEMENT_TYPE_ASSAULT: MovementType = 'assault';
+export const MOVEMENT_TYPE_SUPPORT: MovementType = 'support';
+export const MOVEMENT_TYPE_SETTLE: MovementType = 'settle';
+export const MOVEMENT_TYPE_TRADE: MovementType = 'trade';
 
 export type MovementStatus = 'outbound' | 'returning' | 'done' | 'cancelled';
 const MOVEMENT_STATUSES: MovementStatus[] = ['outbound', 'returning', 'done', 'cancelled'];
 
 // The target's coordinates at send time, bounded the same defensive way `Settlement.x`/`y`
-// are (see that schema's comment) — kept alongside `toSettlementId` so a report/the client
-// can show "scouted (12, -4)" without a second settlement lookup.
+// are (see that schema's comment) — kept alongside `toSettlementId`/`toOasisId` so a
+// report/the client can show "scouted (12, -4)" without a second settlement-or-oasis lookup,
+// regardless of which of the two the movement actually resolved to.
 @Schema({ _id: false })
 export class MovementTarget {
   @Prop({ type: Number, required: true, min: GRID_MIN, max: GRID_MAX })
@@ -40,6 +54,30 @@ export class MovementUnitEntry {
 
 const MovementUnitEntrySchema = SchemaFactory.createForClass(MovementUnitEntry);
 
+// What a raid/assault carries home (§6) — same shape as `ResourceAmountsValue`
+// (`settlement.schema.ts`), declared locally rather than imported: this file already
+// established its own convention of mirroring a settlement subdocument's *shape* rather than
+// reaching across schema files for the class (see `MovementUnitEntry` above, which mirrors
+// `SettlementTroopEntry` the same way), so this keeps that convention consistent within one
+// file. Only the `ResourceAmounts` *type* is imported, for the field's TS shape below — no
+// runtime coupling to `settlement.schema.ts`.
+@Schema({ _id: false })
+export class MovementLoot implements ResourceAmounts {
+  @Prop({ type: Number, required: true, default: 0 })
+  scrap!: number;
+
+  @Prop({ type: Number, required: true, default: 0 })
+  fuel!: number;
+
+  @Prop({ type: Number, required: true, default: 0 })
+  electronics!: number;
+
+  @Prop({ type: Number, required: true, default: 0 })
+  food!: number;
+}
+
+const MovementLootSchema = SchemaFactory.createForClass(MovementLoot);
+
 export type MovementDocument = HydratedDocument<Movement>;
 
 @Schema({
@@ -63,8 +101,27 @@ export class Movement {
   // *this* settlement by id rather than re-resolving `target` by coordinate — settlements
   // never move or change hands in v1, so the two can never disagree, and an id lookup is a
   // single indexed `findById` instead of a coordinate scan.
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Settlement', required: true })
-  toSettlementId!: Types.ObjectId;
+  //
+  // Optional as of M3c (§9): a `raid` or `scout` can now target a farm oasis instead of a
+  // settlement — see `toOasisId` below. INVARIANT: exactly one of `toSettlementId` /
+  // `toOasisId` is ever set on a given movement document; `target` (the coordinates, below)
+  // is always set regardless of which one, so a report or the client can render "raided
+  // (12, -4)" without a second lookup either way. Deliberately **not** enforced by a
+  // Mongoose validator: this codebase's convention for cross-field invariants on these
+  // schemas is a doc comment plus enforcement at the command layer (see e.g. `BuildingSlot`'s
+  // "16 slots max ... enforced by the application layer, not the schema") rather than a
+  // custom Mongoose validator function, and a same-document xor is exactly the shape that
+  // convention already covers — the command layer (`MovementsService`'s send commands) is the
+  // one place that already knows whether it resolved a settlement or an oasis, so it is also
+  // the natural place to guarantee it sets exactly one.
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Settlement' })
+  toSettlementId?: Types.ObjectId;
+
+  // The target oasis's id (M3c, `docs/M3_DESIGN_DECISIONS.md` §10) — set instead of
+  // `toSettlementId` when a `raid` or `scout` targets a farm oasis. See the invariant comment
+  // on `toSettlementId` above.
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Oasis' })
+  toOasisId?: Types.ObjectId;
 
   @Prop({ type: MovementTargetSchema, required: true })
   target!: MovementTarget;
@@ -75,11 +132,32 @@ export class Movement {
   @Prop({ type: [MovementUnitEntrySchema], required: true })
   units!: MovementUnitEntry[];
 
+  // The building type (or the literal `'wall'`) an assault's siege units are ordered against
+  // (§7) — set only on a `type === 'assault'` movement whose army includes siege units, and
+  // read only by the siege pass at arrival; absent on every other movement. Plain `string`,
+  // narrowed at read time exactly the way `SettlementTroopEntry.unitType` and
+  // `BuildingSlot.type` already are (see either's own comment for why: the real, narrower
+  // type lives in a `isXxx` narrowing helper at the read site, not on the schema).
+  @Prop({ type: String })
+  siegeTarget?: string;
+
   // Meaningless (and left `[]`) while `status` is still `outbound`. Populated the moment the
   // movement leaves `outbound`: cancelling sets it equal to `units` (nothing died — the
   // scouts never engaged), arrival sets it to the resolved combat survivors.
   @Prop({ type: [MovementUnitEntrySchema], required: true, default: [] })
   survivors!: MovementUnitEntry[];
+
+  // What this raid/assault is carrying home (§6). Absent (`undefined`) for every movement
+  // that never resolves a battle (scouts, `support`, and every movement created before this
+  // field existed — no migration needed, same "absent reads back as never-set" convention as
+  // `arriveEventId`/`returnEventId` below), and for a raid/assault right up until arrival:
+  // it is computed once, at arrival, from the defender's *settled* resources and the
+  // attacker's surviving carry capacity, then credited to the attacker's home settlement on
+  // the **return** leg (not at arrival) — the return handler is what clamps it to storage
+  // caps, since loot that would overflow the cap by the time the army gets home is lost, not
+  // wasted retroactively (M1 §5's rule, extended here).
+  @Prop({ type: MovementLootSchema })
+  loot?: ResourceAmounts;
 
   @Prop({ type: Number, required: true })
   departAt!: number;

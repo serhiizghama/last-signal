@@ -7,8 +7,11 @@ import { GameConfigModule } from '../game-config/game-config.module';
 import { EventHandlerRegistry } from '../scheduler/event-handler.registry';
 import { SchedulerModule } from '../scheduler/scheduler.module';
 import { SettlementsModule } from '../settlements/settlements.module';
+import { WorldModule } from '../world/world.module';
+import { BattleArrivalResolver } from './handlers/battle-arrival.resolver';
 import { MovementArriveHandler } from './handlers/movement-arrive.handler';
 import { MovementReturnHandler } from './handlers/movement-return.handler';
+import { ScoutArrivalResolver } from './handlers/scout-arrival.resolver';
 import { MovementsController } from './movements.controller';
 import { MovementsService } from './movements.service';
 
@@ -18,12 +21,27 @@ import { MovementsService } from './movements.service';
   // comment in `database.module.ts`); SchedulerModule for `EventHandlerRegistry` +
   // `EventSchedulerService`; GameConfigModule for the injected `GameConfig`; AuthModule for
   // `AuthGuard` + `CurrentAccount` on `MovementsController`; SettlementsModule for
-  // `SettlementsService` — the settle seam both `sendScouts` (origin, ownership-checked) and
+  // `SettlementsService` — the settle seam both `sendMovement` (origin, ownership-checked) and
   // `MovementArriveHandler` (defender, ownership-free) go through, see
-  // `SettlementsService.settleSettlementDoc`/`.settleSettlementDocUnchecked`'s own comments.
-  imports: [DatabaseModule, SchedulerModule, GameConfigModule, AuthModule, SettlementsModule],
+  // `SettlementsService.settleSettlementDoc`/`.settleSettlementDocUnchecked`'s own comments;
+  // WorldModule for `WorldService` — `BattleArrivalResolver` needs the world seed for its
+  // deterministic battle roll (§5 step 4, §18).
+  imports: [
+    DatabaseModule,
+    SchedulerModule,
+    GameConfigModule,
+    AuthModule,
+    SettlementsModule,
+    WorldModule,
+  ],
   controllers: [MovementsController],
-  providers: [MovementsService, MovementArriveHandler, MovementReturnHandler],
+  providers: [
+    MovementsService,
+    MovementArriveHandler,
+    MovementReturnHandler,
+    ScoutArrivalResolver,
+    BattleArrivalResolver,
+  ],
 })
 export class MovementsModule implements OnModuleInit {
   constructor(

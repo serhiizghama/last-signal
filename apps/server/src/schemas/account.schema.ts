@@ -60,6 +60,26 @@ export class Account {
   @Prop({ type: [String], required: true, default: [] })
   medals!: string[];
 
+  // Beginner protection deadline, epoch ms (M3c, `docs/M3_DESIGN_DECISIONS.md` §11):
+  // stamped to `now + config.protection.durationMs` (draft 72h) the moment this account's
+  // *first* settlement is created (`SettlementsService.createSettlement`, inside the same
+  // transaction as the settlement write). `undefined` for every account that has never
+  // founded — including every NPC account, deliberately: `NpcSeederService` writes NPC
+  // settlements via `insertMany` directly against the `settlements` collection, bypassing
+  // `createSettlement` entirely, so no NPC ever gets stamped here (see the stamping call
+  // site's own comment for why protecting them would break §0's raid-economy bounds).
+  //
+  // While `Date.now() < protectedUntil` holds, no foreign movement may target any of this
+  // account's settlements — raid, assault, scout and support are all rejected at send
+  // (enforcement is a later M3c step; this field only exists and gets stamped so far). It
+  // lifts early, before the deadline, the instant this account sends its own first `raid` or
+  // `assault` at another account's settlement — scouting and raiding an *oasis* do **not**
+  // lift it, §11's deliberate asymmetry so a new player following M2c's onboarding loop
+  // ("train a scout, send it") never loses protection by following the tutorial. Not
+  // extendable, not purchasable, does not pause.
+  @Prop({ type: Number })
+  protectedUntil?: number;
+
   @Prop({ type: MongooseSchema.Types.Mixed, required: true, default: {} })
   settings!: Record<string, unknown>;
 

@@ -13,13 +13,13 @@ import {
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentAccount } from '../auth/current-account.decorator';
 import type { AccountDocument } from '../schemas/account.schema';
-import { SendScoutsDto } from './dto/send-scouts.dto';
+import { SendMovementDto } from './dto/send-movement.dto';
 import { MovementsService } from './movements.service';
 import type { MovementView } from './movements.view';
 
 // Every route here is ownership-checked (§ M1b/M2b.3 convention): `MovementsService` verifies
 // the resolved account actually owns the settlement/movement id involved before
-// reading/mutating it — see `MovementsService.sendScouts`
+// reading/mutating it — see `MovementsService.sendMovement`
 // (via `SettlementsService.settleSettlementDoc`) and `.cancelMovement`'s own comments.
 @Controller('movements')
 @UseGuards(AuthGuard)
@@ -40,15 +40,16 @@ export class MovementsController {
   @Post()
   async send(
     @CurrentAccount() account: AccountDocument,
-    @Body() dto: SendScoutsDto,
+    @Body() dto: SendMovementDto,
   ): Promise<MovementView> {
-    return this.movementsService.sendScouts(
+    return this.movementsService.sendMovement(
       dto.fromSettlementId,
       account._id,
       dto.type,
       dto.target,
       dto.units,
       Date.now(),
+      dto.siegeTarget,
     );
   }
 

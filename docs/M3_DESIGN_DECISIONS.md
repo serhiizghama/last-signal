@@ -2,8 +2,9 @@
 
 **Status: every item below is DECIDED** — settled with the owner in the design session of
 2026-08-17 (two rounds of structured Q&A, the shape `docs/M2_DESIGN_SESSION_PROMPT.md`
-prescribes). This document is the **binding design record for M3**; for M3 scope it **wins
-over `IMPLEMENTATION_PLAN.md`** if the two ever disagree, and it inherits everything
+prescribes). **Four later owner amendments are recorded in §24** — read it alongside §4 and
+§5, which it amends. This document is the **binding design record for M3**; for M3 scope it
+**wins over `IMPLEMENTATION_PLAN.md`** if the two ever disagree, and it inherits everything
 `M1_DESIGN_DECISIONS.md` and `M2_DESIGN_DECISIONS.md` settled — the Food gate, storage
 caps, the Influence definition, config injection, numeric conventions, the concurrency
 playbook, Chebyshev distance, the travel-time contract, the scouting model. Those are not
@@ -860,3 +861,64 @@ wrong by an order of magnitude); extend the M1 reference-player harness with an 
 raid income stream where it is cheap; keep every draft number in `GameConfig` so `tools/sim`
 can sweep it in M4; apply the §21 plan edits **before** the first line of M3 code, the way
 M2.0 did.
+
+---
+
+## 24. Owner amendments after M3a (2026-08-17)
+
+Four questions the original session did not settle, or settled in a way M3a's implementation
+and live acceptance run proved wrong. All four were put to the owner and decided on
+2026-08-17, after M3a shipped (`6dc6d54`) and before the first line of M3b. **They amend the
+sections named below and win over them**, exactly as this record wins over the plan.
+
+**A. Siege units die last, alongside Settlers — amends §4.** `starvationOrder` sorts by
+`attack + defInfantry + defCavalry` ascending, which is what §4 specifies, but siege units
+have deliberately poor defensive stats: the Rail Sling (790 resources, the most expensive
+unit in the game after the Settler) starved before *every* cavalry unit and before infantry
+costing a quarter as much. §4 already applied exactly this reasoning to the Settler — "a
+large investment ... losing them to a Food dip would be brutal" — and simply did not extend
+it to siege. It is extended now: a "dies-last rank" sorts `role: 'settler'` last,
+`role: 'siege'` second-to-last, everything else by the unchanged §4 chain (combat weight →
+training cost → unit id).
+
+**B. In-transit troops (`awayTroops`) are exempt from starvation — amends §4.** M3a's live
+run found that troops starved out of `awayTroops` came back to life on the movement's return:
+the movement document still listed them, so the arrival resolved with the full count and the
+return credited them home. `awayTroops` is a denormalized counter and nothing keeps it in
+sync with the in-flight movement documents — §3 defines the counter but never says the
+movement must be updated to match, and §18 designs cross-document writes only for arrivals.
+Decision: in-transit troops still **pay** Food upkeep (the M3a.4 exploit fix stands untouched
+— marching an army out must never cut your upkeep) but can no longer **die**. Only
+`stationedTroops` (guests, first) and home `troops` (second) are killed.
+
+*The accepted cost, flagged to the owner before the decision and confirmed:* a marching army
+is immortal to starvation, so a starving settlement's own home garrison and its allies'
+stationed contingents die to feed it, and "march to dodge the tick" still works. It is not
+free — the dodge costs your home defence, needs manual re-sending every round trip, and
+leaves the settlement at 0 Food with the net-Food gate freezing all building and training —
+and the alternative (walking every outbound movement and debiting it) is a cross-document
+write from the starvation handler that §18 never designed. Revisit with `tools/sim` data in
+M4 if it proves abusable. **New consequence, recorded:** `resolved: false` is now reachable
+when the deficit is driven by in-transit upkeep or by buildings, so the tick can legitimately
+kill nothing and re-arm on the ordinary hourly cadence.
+
+**C. Defender losses use the uniform loss fraction — resolves an ambiguity in §5.** §5 says
+defender losses are "shared across contingents proportionally to each contingent's
+contribution to `defPts` — an ally who sent 10 % of the defence loses 10 % of the casualties,
+not 10 % of *their* stack", and *also* calls it "Travian's rule". Those are two different
+algorithms: a defPts-weighted casualty budget (with clamping and redistribution when a
+contingent's share exceeds its body count) versus one uniform loss fraction applied to every
+contingent and every unit type. The owner chose **the uniform fraction — Travian's actual
+rule**. Losses therefore land proportional to body count, not to defence contribution. It is
+order-independent, trivially deterministic, and reproduces §0's contract table exactly. §5's
+"proportionally to `defPts`" phrasing is superseded; what it was rejecting — applying
+casualties to contingents in array order until a budget runs out — stays rejected.
+
+**D. The §1 faction-identity stat drafts stay as shipped until M4.** M3a.1 proved three of
+§1's identity claims false against §1's own draft numbers (Raiders are cheapest per attack
+point only for cavalry; Nomads are fastest only for scouts and cavalry, and are worst per
+Scrap on defence — the Torcher strictly dominates the Hunter-Sniper on both defence axes).
+All three are repairable without invalidating §0, whose four rows use only Brute, Torcher and
+Biker. The owner deferred the repair to M4's `tools/sim` pass, where §22 already puts every
+number in this record. **Nothing is to be retuned by hand before then**, and §0's table stays
+the fixed contract in the meantime.

@@ -4,6 +4,7 @@ import type { BuildingType, GameConfig, Resources, UnitType } from '@last-signal
 import {
   RESOURCE_KINDS,
   addResources,
+  beginnerProtectionUntil,
   calcBuildCost,
   calcBuildTimeMs,
   calcInfluence,
@@ -28,7 +29,8 @@ import { isDuplicateKeyError } from '../database/mongo-errors.util';
 import { PlacementService } from '../placement/placement.service';
 import { PlacementExhaustedError } from '../placement/placement.errors';
 import { EventSchedulerService } from '../scheduler/event-scheduler.service';
-import type { Faction } from '../schemas/account.schema';
+import type { AccountDocument, Faction } from '../schemas/account.schema';
+import { Account } from '../schemas/account.schema';
 import type { SettlementDocument } from '../schemas/settlement.schema';
 import { Settlement } from '../schemas/settlement.schema';
 import { promoteWaitingItems, toPlainQueueItem } from './build-queue.util';
@@ -97,6 +99,7 @@ function overCap(cost: Resources, caps: Resources): Partial<Resources> {
 export class SettlementsService {
   constructor(
     @InjectModel(Settlement.name) private readonly settlementModel: Model<SettlementDocument>,
+    @InjectModel(Account.name) private readonly accountModel: Model<AccountDocument>,
     @InjectConnection() private readonly connection: Connection,
     @Inject(EventSchedulerService) private readonly eventScheduler: EventSchedulerService,
     @Inject(GAME_CONFIG) private readonly config: GameConfig,
@@ -513,6 +516,10 @@ export class SettlementsService {
           if (existingSettlements.length >= allowed) {
             throw new SettlementLimitReachedError();
           }
+          // Reused below to decide whether to stamp beginner protection — `existingSettlements`
+          // is already in hand for the Influence check above, so this is free: no second count
+          // query.
+          const isFirstSettlement = existingSettlements.length === 0;
 
           const [created] = await this.settlementModel.create(
             [
@@ -532,6 +539,29 @@ export class SettlementsService {
           if (!created) {
             throw new Error('SettlementsService: settlement creation returned no document');
           }
+
+          // Beginner protection (M3c, `docs/M3_DESIGN_DECISIONS.md` §11): stamped only on an
+          // account's *first* settlement, inside this same transaction, using the
+          // `isFirstSettlement` flag `existingSettlements` already gave us for free above.
+          //
+          // NPC accounts never take this path and must NOT be protected. `NpcSeederService`
+          // writes NPC settlements via `insertMany` directly against the `settlements`
+          // collection, bypassing `createSettlement` (and this stamping) entirely by
+          // construction — that is the correct outcome, not a gap to "fix". §19.2 is explicit
+          // that NPC settlements exist to be raided: it extends the seeder bands with real
+          // defenders precisely because "135 free farms with zero defence would hand every
+          // player the §0 raid-income bound on day one". Stamping NPCs with 72h of protection
+          // here would make the entire seeded world un-raidable for the first three days of
+          // every round and break that same §0 bound.
+          if (isFirstSettlement) {
+            const protectedUntil = beginnerProtectionUntil(this.config, now);
+            await this.accountModel.updateOne(
+              { _id: accountId },
+              { $set: { protectedUntil } },
+              { session },
+            );
+          }
+
           result = buildSettlementStateView(this.config, created, now);
         });
         return result as SettlementStateView;
@@ -740,8 +770,8 @@ export class SettlementsService {
   // exists but belongs to someone else is reported identically to one that doesn't exist at
   // all (same error, same 404) — deliberately not a 403, so a probe against another
   // account's settlement id can't distinguish "wrong owner" from "no such settlement". Not
-  // `private` (only) any more: also called directly by `MovementsService.sendScouts` for the
-  // *origin* settlement, which needs the exact same ownership check this class already
+  // `private` (only) any more: also called directly by `MovementsService.sendMovement` for
+  // the *origin* settlement, which needs the exact same ownership check this class already
   // enforces for every other command — see that method's own comment.
   //
   // Also the M3a.6 lazy-scheduling choke point (`docs/M3_DESIGN_DECISIONS.md` §4): every

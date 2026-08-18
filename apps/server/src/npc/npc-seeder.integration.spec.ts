@@ -127,6 +127,20 @@ describe('NPC seeding (integration)', () => {
     }
   });
 
+  // M3c beginner protection (`docs/M3_DESIGN_DECISIONS.md` §11, §19.2): `NpcSeederService`
+  // writes settlements via `insertMany`, bypassing `SettlementsService.createSettlement`
+  // (and its `protectedUntil` stamping) entirely — a freshly seeded NPC account must
+  // therefore carry no `protectedUntil` at all. Protecting NPCs would make the whole seeded
+  // world un-raidable for 72h and break the §0 raid-income bound the extended seeder bands
+  // exist to satisfy.
+  it('freshly seeded NPC accounts have no protectedUntil (beginner protection does not cover NPCs)', async () => {
+    const npcAccounts = await accountModel.find({ isNpc: true });
+    expect(npcAccounts).toHaveLength(135);
+    for (const account of npcAccounts) {
+      expect(account.protectedUntil).toBeUndefined();
+    }
+  });
+
   it('pickNpcBand draws roughly 40/40/20 over many draws (the weighting logic itself, decoupled from persisted data)', () => {
     const counts: Record<string, number> = { young: 0, developed: 0, veteran: 0 };
     const draws = 20_000;

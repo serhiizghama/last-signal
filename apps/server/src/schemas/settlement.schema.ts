@@ -227,7 +227,7 @@ export class Settlement {
   // `troops` and `stationedTroops` below at every upkeep call site), so a command never has to
   // cross-read every in-flight `Movement` document just to know what its own settlement owes
   // in Food. It is maintained inside the SAME transaction as every send / arrive / return
-  // (`MovementsService.sendScouts`, `MovementArriveHandler`, `MovementReturnHandler`) —
+  // (`MovementsService.sendMovement`, `MovementArriveHandler`, `MovementReturnHandler`) —
   // units move `troops → awayTroops` at send, back to `troops` on return, and losses are
   // removed from `awayTroops` the instant they die rather than waiting for the return leg.
   // Letting this drift from what the in-flight movements actually hold would silently
