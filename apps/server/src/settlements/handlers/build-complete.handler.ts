@@ -5,9 +5,11 @@ import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { ClientSession, Model } from 'mongoose';
 
+import { NotificationsService } from '../../notifications/notifications.service';
 import { EventSchedulerService } from '../../scheduler/event-scheduler.service';
 import type { EventHandler } from '../../scheduler/event-handler.interface';
 import type { GameEventDocument } from '../../schemas/event.schema';
+import { NOTIFICATION_KIND_BUILD_COMPLETE } from '../../schemas/notification.schema';
 import type { SettlementDocument } from '../../schemas/settlement.schema';
 import { Settlement } from '../../schemas/settlement.schema';
 import { promoteWaitingItems, toPlainQueueItem } from '../build-queue.util';
@@ -41,6 +43,7 @@ export class BuildCompleteHandler implements EventHandler {
     @Inject(GAME_CONFIG) private readonly config: GameConfig,
     @Inject(ACTIVE_BUILD_SLOTS) private readonly activeBuildSlots: number,
     @Inject(SettlementsService) private readonly settlementsService: SettlementsService,
+    @Inject(NotificationsService) private readonly notificationsService: NotificationsService,
   ) {}
 
   async handle(event: GameEventDocument, session: ClientSession): Promise<void> {
@@ -96,6 +99,9 @@ export class BuildCompleteHandler implements EventHandler {
         existing.level = Math.min(item.targetLevel, existing.level + 1);
       }
     }
+    // Read back rather than re-derived by hand — correct regardless of which branch above
+    // ran, and reused below for the `buildComplete` notification payload (§16).
+    const newLevel = buildings.find((b) => b.type === item.type)?.level ?? item.targetLevel;
 
     let remainingQueue = doc.buildQueue
       .filter((i) => i.id !== payload.queueItemId)
@@ -146,5 +152,15 @@ export class BuildCompleteHandler implements EventHandler {
     // `ensureStarvationSchedule`'s own comment for why calling it here (unlike from
     // `StarvationTickHandler`) carries no self-cancellation risk.
     await this.settlementsService.ensureStarvationSchedule(updated, event.dueAt, session);
+
+    // §16's `buildComplete` trigger — one per finished queue item (never per level, since a
+    // queue item and a level-up are the same thing on this side of the M1 §6 build-queue
+    // rule: one active build at a time targets exactly one level).
+    await this.notificationsService.enqueue(
+      updated.accountId,
+      NOTIFICATION_KIND_BUILD_COMPLETE,
+      { settlementId: String(updated._id), buildingType: item.type, level: newLevel },
+      session,
+    );
   }
 }

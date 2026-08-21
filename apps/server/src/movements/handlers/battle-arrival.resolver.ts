@@ -22,6 +22,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import type { ClientSession, Model } from 'mongoose';
 
 import { GAME_CONFIG } from '../../game-config/game-config.tokens';
+import { NotificationsService } from '../../notifications/notifications.service';
 import { EventSchedulerService } from '../../scheduler/event-scheduler.service';
 import type { GameEventDocument } from '../../schemas/event.schema';
 import type { MovementDocument } from '../../schemas/movement.schema';
@@ -130,6 +131,9 @@ export class BattleArrivalResolver implements MovementArrivalResolver {
     // that module's own comment — every other handler in this file already goes through
     // `SettlementsService` for the settle seam), so this is no new module wiring.
     @Inject(SettlementsService) private readonly settlementsService: SettlementsService,
+    // §16's `battleReportArrived` trigger — every report `writeReports`/`resolveMissingTarget`
+    // below writes gets an outbox row through this, via `enqueueForReports`.
+    @Inject(NotificationsService) private readonly notificationsService: NotificationsService,
   ) {}
 
   async resolveArrival(
@@ -387,7 +391,7 @@ export class BattleArrivalResolver implements MovementArrivalResolver {
   ): Promise<void> {
     const type: ReportType =
       movement.type === MOVEMENT_TYPE_ASSAULT ? REPORT_TYPE_ASSAULT : REPORT_TYPE_RAID;
-    await this.reportModel.create(
+    const created = await this.reportModel.create(
       [
         {
           accountId: movement.ownerAccountId,
@@ -403,6 +407,7 @@ export class BattleArrivalResolver implements MovementArrivalResolver {
       ],
       { session },
     );
+    await this.notificationsService.enqueueForReports(created, session);
 
     await turnAroundOutboundMovement(
       movement,
@@ -611,7 +616,12 @@ export class BattleArrivalResolver implements MovementArrivalResolver {
       });
     }
 
-    await this.reportModel.create(reports, { session, ordered: true });
+    const created = await this.reportModel.create(reports, { session, ordered: true });
+    // §16's `battleReportArrived` trigger — one per report just written (attacker,
+    // defender, every affected supporter, and the `buildingDestroyed` recipient when a siege
+    // pass changed a level): `enqueueForReports` is the shared hook every combat-report
+    // writer in this codebase calls, see its own comment (`notifications.service.ts`).
+    await this.notificationsService.enqueueForReports(created, session);
   }
 
   // Writes the defender's `troops` (home contingent survivors), `stationedTroops` (every

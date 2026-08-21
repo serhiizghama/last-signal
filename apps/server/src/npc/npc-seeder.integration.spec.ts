@@ -68,6 +68,9 @@ describe('NPC seeding (integration)', () => {
     // Seeds the full 135-NPC population as a side effect (`NpcSeederService.onModuleInit`),
     // exactly like a real fresh boot.
     await app.init();
+    // Explicit IPv4-bound single listener — avoids ephemeral-port collisions with other
+    // local processes; see `accounts.integration.spec.ts`'s beforeAll for why this matters.
+    await app.listen(0, '127.0.0.1');
 
     accountModel = moduleRef.get(getModelToken(Account.name));
     settlementModel = moduleRef.get(getModelToken(Settlement.name));

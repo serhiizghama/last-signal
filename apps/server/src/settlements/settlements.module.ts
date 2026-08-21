@@ -4,6 +4,7 @@ import { Inject, Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { DatabaseModule } from '../database/database.module';
 import { GameConfigModule } from '../game-config/game-config.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { PlacementModule } from '../placement/placement.module';
 import { EventHandlerRegistry } from '../scheduler/event-handler.registry';
 import { SchedulerModule } from '../scheduler/scheduler.module';
@@ -19,8 +20,17 @@ import { SettlementsService } from './settlements.service';
   // comment in `database.module.ts`); SchedulerModule for `EventHandlerRegistry` +
   // `EventSchedulerService`; GameConfigModule for the injected `GameConfig`; PlacementModule
   // for settlement creation's outer-ring placement; AuthModule for `AuthGuard` +
-  // `CurrentAccount` on `SettlementsController`.
-  imports: [DatabaseModule, SchedulerModule, GameConfigModule, PlacementModule, AuthModule],
+  // `CurrentAccount` on `SettlementsController`; NotificationsModule (M3e.1, §16) for
+  // `NotificationsService` — the `buildComplete`, `trainingComplete` and `troopsStarving`
+  // triggers all enqueue through it.
+  imports: [
+    DatabaseModule,
+    SchedulerModule,
+    GameConfigModule,
+    PlacementModule,
+    AuthModule,
+    NotificationsModule,
+  ],
   controllers: [SettlementsController],
   providers: [
     SettlementsService,

@@ -35,6 +35,13 @@ describe('Accounts (integration)', () => {
     app = moduleRef.createNestApplication();
     app.setGlobalPrefix('api');
     await app.init();
+    // One stable listener for the whole file, bound explicitly to IPv4 loopback, so
+    // `request(app.getHttpServer())` reuses it instead of supertest opening/closing its own
+    // ephemeral `listen(0)` per request — that per-request churn let a foreign process's
+    // IPv4-only bind on a recycled port shadow ours (observed: a foreign Express server on
+    // 127.0.0.1:49915 answering `POST /api/auth/guest` with an unrelated 401/403/404). Do not
+    // simplify this back to `app.init()` alone.
+    await app.listen(0, '127.0.0.1');
 
     accountModel = moduleRef.get(getModelToken(Account.name));
     sessionModel = moduleRef.get(getModelToken(Session.name));

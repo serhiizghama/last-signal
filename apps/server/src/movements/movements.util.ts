@@ -1,5 +1,17 @@
-import type { GameConfig, Resources, TroopCounts, UnitType } from '@last-signal/game-core';
-import { UNIT_TYPES } from '@last-signal/game-core';
+import type {
+  BuildingLevels,
+  GameConfig,
+  Resources,
+  TroopCounts,
+  UnitType,
+} from '@last-signal/game-core';
+import {
+  RESOURCE_KINDS,
+  UNIT_TYPES,
+  addResources,
+  calcStorageCaps,
+  emptyResources,
+} from '@last-signal/game-core';
 import type { ClientSession, Model } from 'mongoose';
 
 import type { GameEventDocument } from '../schemas/event.schema';
@@ -8,6 +20,7 @@ import {
   MOVEMENT_TYPE_ASSAULT,
   MOVEMENT_TYPE_RAID,
   MOVEMENT_TYPE_SCOUT,
+  MOVEMENT_TYPE_SETTLE,
   MOVEMENT_TYPE_SUPPORT,
 } from '../schemas/movement.schema';
 import type { EventSchedulerService } from '../scheduler/event-scheduler.service';
@@ -40,16 +53,24 @@ export function mergeUnitCounts(units: ReadonlyArray<UnitCountEntry>): UnitCount
   return [...byType.entries()].map(([unitType, count]) => ({ unitType, count }));
 }
 
-// The movement types `MovementsService.sendMovement` can actually produce (M3c.3, §9):
-// `scout` (M2, unchanged), `raid`, `assault`, `support`. `settle`/`trade` reached the schema
-// in M3c.2 (`MovementType` was widened for storage) but have no send path yet — M3d owns
-// them — so a DTO carrying either is rejected with `errors.movement.unknownType`, same as any
-// other unrecognised string. Same array-narrowing pattern as `isUnitType` above.
+// The movement types `MovementsService.sendMovement` can actually produce: `scout` (M2,
+// unchanged), `raid`, `assault`, `support` (M3c.3), and — as of M3d.1, §9/§13 — `settle`.
+// `trade` reached the schema in M3c.2 (`MovementType` was widened for storage) and gained a
+// real producer in M3d.3 — but that producer is `MarketService.acceptOffer`
+// (`POST /api/market/offers/:id/accept`), never this generic endpoint: a trade movement
+// carries `cargo` (a resource bundle) and `merchants` (a count), never `units`, and always
+// comes paired with a sibling leg created atomically in the same transaction — a shape this
+// single-movement, unit-list-shaped command has no way to express and was never asked to.
+// So `trade` stays permanently absent from this list, and a DTO naming it is rejected with
+// `errors.movement.unknownType`, same as any other unrecognised string — not because it is
+// unimplemented, but because this is deliberately not its entry point. Same array-narrowing
+// pattern as `isUnitType` above.
 const SENDABLE_MOVEMENT_TYPES = [
   MOVEMENT_TYPE_SCOUT,
   MOVEMENT_TYPE_RAID,
   MOVEMENT_TYPE_ASSAULT,
   MOVEMENT_TYPE_SUPPORT,
+  MOVEMENT_TYPE_SETTLE,
 ] as const;
 
 export type SendableMovementType = (typeof SENDABLE_MOVEMENT_TYPES)[number];
@@ -207,4 +228,57 @@ export async function turnAroundOutboundMovement(
         '(missing target)',
     );
   }
+}
+
+export interface ResourceCreditResult {
+  /** `currentValues` grown by `amount` and clamped to `buildings`' own storage caps. */
+  values: Resources;
+  /** How much of `amount`, per resource, actually landed in storage. */
+  delivered: Resources;
+  /** How much overflowed the cap and was lost — not banked, not retroactively wasted elsewhere. */
+  lost: Resources;
+}
+
+/**
+ * Credits `amount` (all four resources at once) into `currentValues`, clamped to `buildings`'
+ * own storage caps — the general, four-resource shape of the "credit then clamp, overflow
+ * lost" rule this codebase already applies twice: `MovementReturnHandler` inlined it for a
+ * raid/assault's `loot` (M3c.5a, §6/M1 §5), and `market/market.util.ts`'s `computeOfferRefund`
+ * (M3d.2) implements the same rule for a single resource (an offer only ever refunds the one
+ * resource it named). M3d.3 (§14) needed the identical arithmetic a THIRD time for a trade
+ * movement's `cargo` — both delivered to the destination at arrival
+ * (`TradeArrivalResolver.resolveArrival`) and, when a leg never delivers (cancelled, or
+ * `resolveMissingTarget`'s "destination gone" edge case), refunded home at return
+ * (`MovementReturnHandler`) — so this is extracted here rather than written a third time.
+ *
+ * Deliberately NOT unified with `computeOfferRefund`: that function's whole signature is
+ * built around crediting exactly one named resource (an offer's `give` side), and forcing it
+ * through a four-resource `Resources` bundle would mean every call site invents a
+ * `{...zeroed, [resource]: amount}` object just to satisfy a shape it doesn't need — more
+ * ceremony than the three lines of arithmetic it would save. This function lives in
+ * `movements/movements.util.ts`, not `market/market.util.ts`, because its first two callers
+ * (loot, cargo) are both movement concerns; `computeOfferRefund` stays where it is, for the
+ * one concern (an offer's own refund) that is never expressed as a full four-resource bundle.
+ *
+ * `MovementReturnHandler`'s existing loot block is refactored to call this rather than
+ * keeping its own copy — behaviourally identical, since the arithmetic here is copied from it
+ * verbatim.
+ */
+export function creditResourcesClamped(
+  config: GameConfig,
+  buildings: BuildingLevels,
+  currentValues: Resources,
+  amount: Resources,
+): ResourceCreditResult {
+  const caps = calcStorageCaps(config, buildings);
+  const grown = addResources(currentValues, amount);
+  const values = emptyResources();
+  const delivered = emptyResources();
+  const lost = emptyResources();
+  for (const kind of RESOURCE_KINDS) {
+    values[kind] = Math.min(caps[kind], grown[kind]);
+    delivered[kind] = Math.max(0, values[kind] - currentValues[kind]);
+    lost[kind] = grown[kind] - values[kind];
+  }
+  return { values, delivered, lost };
 }

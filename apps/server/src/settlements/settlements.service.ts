@@ -457,11 +457,73 @@ export class SettlementsService {
     });
   }
 
-  // Creates the calling account's first (in v1, effectively only) settlement: places it via
-  // `PlacementService`'s center-out expanding annulus policy
-  // (`docs/M2_DESIGN_DECISIONS.md` §3), seeds it with a level-1 Command Center and the
-  // starting resource stock, and refuses a second settlement once the account already owns
-  // as many as its Influence allows.
+  // The one definition of "what a brand-new settlement looks like" (M1 §4: a Command Center
+  // at L1 and nothing else, plus the starting resource stock) — shared by `createSettlement`
+  // below (a *random* tile, drawn by `PlacementService`) and, as of M3d.1,
+  // `SettleArrivalResolver` (a *caller-chosen* tile, the target of a `settle` movement, §13).
+  // Neither caller may fork its own copy of this shape (the brief for M3d.1 is explicit:
+  // "do not fork a second definition of what a new settlement looks like").
+  //
+  // Deliberately does NOT check Influence, does NOT stamp `account.protectedUntil`, and does
+  // NOT catch the `{x, y}` unique-index collision — all three are caller concerns, not this
+  // method's:
+  //   - Influence is a pre-condition each caller already re-derives its own way
+  //     (`createSettlement`'s own `settlementsAllowed` check above; `SettleArrivalResolver`'s
+  //     arrival-time re-check, §13's "the gate is checked twice") — folding it in here would
+  //     mean checking it against whatever `existingSettlements` snapshot *this* method
+  //     happened to take, which is exactly the kind of second, possibly-stale copy of the
+  //     same fact `docs/CONCURRENCY_PLAYBOOK.md` warns against.
+  //   - `protectedUntil` (§11) is stamped only on an account's *first* settlement.
+  //     `createSettlement` computes `isFirstSettlement` itself (from the very same
+  //     `existingSettlements` read its own Influence check needed anyway) and stamps it
+  //     right after calling this method. `SettleArrivalResolver` can never legitimately reach
+  //     this method with `isFirstSettlement` true at all — training a Settler needs an
+  //     existing Command Center, which needs an existing settlement — so it simply never
+  //     stamps anything, which is the correct behaviour, not a gap: the gate lives entirely
+  //     in "nobody calls the stamp for a `settle`-founded settlement", not in a flag this
+  //     method would otherwise have to thread through.
+  //   - The unique-index collision (§13: "the `{x, y}` unique index is the final authority")
+  //     is a `create()` failure each caller is already structured to catch differently:
+  //     `createSettlement` aborts its whole transaction and retries with a fresh candidate
+  //     tile (its own bounded loop, below); `SettleArrivalResolver` catches it *inside* its
+  //     own already-open arrival transaction and turns the convoy around instead of
+  //     retrying — a caller-chosen tile has no "fresh candidate" to retry with.
+  // Not `private`: `SettleArrivalResolver` (`movements/handlers/settle-arrival.resolver.ts`)
+  // is this method's other caller — see the class comment above for why it, not this method,
+  // owns the Influence/protection/collision concerns.
+  async createSettlementDoc(
+    accountId: Types.ObjectId,
+    settlementName: string,
+    x: number,
+    y: number,
+    now: number,
+    session: ClientSession,
+  ): Promise<SettlementDocument> {
+    const [created] = await this.settlementModel.create(
+      [
+        {
+          accountId,
+          name: settlementName,
+          x,
+          y,
+          buildings: [{ id: randomUUID(), type: 'commandCenter', level: 1, slot: 0 }],
+          resources: { values: { ...STARTING_RESOURCES }, lastCalcAt: now },
+          buildQueue: [],
+          version: 0,
+        },
+      ],
+      { session },
+    );
+    if (!created) {
+      throw new Error('SettlementsService: settlement creation returned no document');
+    }
+    return created;
+  }
+
+  // Creates the calling account's first (in v1, effectively only) settlement via the normal
+  // player flow: places it via `PlacementService`'s center-out expanding annulus policy
+  // (`docs/M2_DESIGN_DECISIONS.md` §3), seeds it via `createSettlementDoc` above, and refuses
+  // a second settlement once the account already owns as many as its Influence allows.
   //
   // Not built on top of `runCommand`/version-guarded `findOneAndUpdate` like every other
   // command here — there is no existing document to version-guard yet, this one *creates*
@@ -521,24 +583,14 @@ export class SettlementsService {
           // query.
           const isFirstSettlement = existingSettlements.length === 0;
 
-          const [created] = await this.settlementModel.create(
-            [
-              {
-                accountId,
-                name: settlementName,
-                x,
-                y,
-                buildings: [{ id: randomUUID(), type: 'commandCenter', level: 1, slot: 0 }],
-                resources: { values: { ...STARTING_RESOURCES }, lastCalcAt: now },
-                buildQueue: [],
-                version: 0,
-              },
-            ],
-            { session },
+          const created = await this.createSettlementDoc(
+            accountId,
+            settlementName,
+            x,
+            y,
+            now,
+            session,
           );
-          if (!created) {
-            throw new Error('SettlementsService: settlement creation returned no document');
-          }
 
           // Beginner protection (M3c, `docs/M3_DESIGN_DECISIONS.md` §11): stamped only on an
           // account's *first* settlement, inside this same transaction, using the

@@ -2,12 +2,14 @@ import type {
   BuildingLevels,
   BuildingType,
   GameConfig,
+  ResourceKind,
   Resources,
   TroopCounts,
   UnitType,
 } from '@last-signal/game-core';
 import {
   BUILDING_TYPES,
+  RESOURCE_KINDS,
   SETTLEMENT_SLOTS,
   UNIT_TYPES,
   calcNetFoodPerHour,
@@ -29,6 +31,16 @@ export function isBuildingType(value: string): value is BuildingType {
 // `trainUnits`'s request body — the schema comment on `SettlementTroopEntry` points here.
 export function isUnitType(value: string): value is UnitType {
   return (UNIT_TYPES as readonly string[]).includes(value);
+}
+
+// Same narrowing again, for `TradeOffer.give`/`.want`'s `resource` field
+// (`schemas/trade-offer.schema.ts`, M3d.2, §14) — that schema stores `resource` as a plain
+// `string` for the same reason `SettlementTroopEntry.unitType` does (see that field's own
+// schema comment): `MarketService` is the one place that narrows it before calling into any
+// `game-core` market formula (`weightedResourceValue`, `isOfferRatioLegal`,
+// `merchantsNeededFor`).
+export function isResourceKind(value: string): value is ResourceKind {
+  return (RESOURCE_KINDS as readonly string[]).includes(value);
 }
 
 // Adapts a settlement's persisted building list (`{id, type, level, slot}`, `type: string`)
@@ -71,6 +83,27 @@ export function upkeepTroopsOf(doc: {
   return unionTroops(
     toTroopCounts(doc.troops),
     toTroopCounts(doc.awayTroops),
+    ...doc.stationedTroops.map((contingent) => toTroopCounts(contingent.troops)),
+  );
+}
+
+// The union of a settlement's home troops and every stationed contingent's troops — what is
+// physically present to defend this settlement in a battle (§5, already implemented this way
+// in `BattleArrivalResolver`) and, per §8, what must also count for the host's scout defence
+// and detection (M3c.6 closes the obligation `upkeepTroopsOf`'s own M3a.4 comment recorded:
+// "M3c must widen this to include `targetDoc.stationedTroops` once the `support` movement can
+// actually populate it" — `SupportArrivalResolver` now does, so `ScoutArrivalResolver` uses
+// this helper instead of `troops` alone). Deliberately its OWN helper, not `upkeepTroopsOf`
+// with a flag: the two answer genuinely different questions over genuinely different subsets
+// of the same three lists — upkeep is charged the instant a unit leaves home, so it MUST
+// include `awayTroops` (§3); defence/detection is about who is physically here right now, so
+// it must NOT — a unit marching elsewhere cannot fight or watch for the settlement it left.
+export function defenceTroopsOf(doc: {
+  troops: ReadonlyArray<{ unitType: string; count: number }>;
+  stationedTroops: ReadonlyArray<{ troops: ReadonlyArray<{ unitType: string; count: number }> }>;
+}): TroopCounts {
+  return unionTroops(
+    toTroopCounts(doc.troops),
     ...doc.stationedTroops.map((contingent) => toTroopCounts(contingent.troops)),
   );
 }

@@ -27,6 +27,9 @@ describe('Health (integration)', () => {
     app = moduleRef.createNestApplication();
     app.setGlobalPrefix('api');
     await app.init();
+    // Explicit IPv4-bound single listener — avoids ephemeral-port collisions with other
+    // local processes; see `accounts.integration.spec.ts`'s beforeAll for why this matters.
+    await app.listen(0, '127.0.0.1');
   }, 60_000);
 
   afterAll(async () => {

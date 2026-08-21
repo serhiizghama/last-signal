@@ -47,7 +47,14 @@ describe('Realtime gateway (integration)', () => {
     // ephemeral listen internally, which is fine for HTTP alone, but a raw websocket upgrade
     // needs the server already bound. `supertest` is still used below for REST calls (guest
     // login) against this same, now-listening server.
-    await app.listen(0);
+    //
+    // The explicit `'127.0.0.1'` host is load-bearing, not cosmetic — see
+    // `accounts.integration.spec.ts`'s `beforeAll` for the captured evidence (M3c.x): a bare
+    // `listen(0)` binds dual-stack `::`, while both `baseUrl` below and supertest address
+    // `127.0.0.1`, so a foreign IPv4-only bind on the same recycled ephemeral port can shadow
+    // ours and answer the request instead. This file already avoided the *churn* half of that
+    // hazard by listening once; this closes the interface half too.
+    await app.listen(0, '127.0.0.1');
     const address = app.getHttpServer().address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
 

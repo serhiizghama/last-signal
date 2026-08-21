@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AccountView, MapView, MovementView, SettlementStateView } from '../api/types';
 import errorsRu from '../i18n/locales/ru/errors.json';
 import mapRu from '../i18n/locales/ru/map.json';
+import militaryRu from '../i18n/locales/ru/military.json';
 import { Onboarding } from '../onboarding/Onboarding';
 import { MapScreen } from './MapScreen';
 import { computeVisibleTileRange, tileCountInRange, tileSizeForZoom } from './mapGeometry';
@@ -422,7 +423,11 @@ describe('Tile info sheet + send-scout flow (M2c.2)', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it("shows an oasis's public card with no scout action, and closes via Escape", async () => {
+  // M3e.3/§10 lifts M2 §8's "oases aren't scoutable" deferral: an oasis now offers a scout
+  // action exactly like a settlement (disabled with its own reason when there's nothing to
+  // send), plus raid/assault (`docs/M3_DESIGN_DECISIONS.md` §10) — the attack-flow test block
+  // further down covers the raid/assault/army-picker surface in depth.
+  it("shows an oasis's public card with a scout action (disabled with no scouts at home) and no support option, and closes via Escape", async () => {
     const settlement = settlementFixture();
     const { container } = renderMapScreen(mapViewFixture(), settlement);
     await screen.findByText('Раунд 3, акт 1');
@@ -432,8 +437,15 @@ describe('Tile info sheet + send-scout flow (M2c.2)', () => {
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(mapRu.sheet.oasisTitle)).toBeInTheDocument();
     expect(within(dialog).getByText(mapRu.sheet.oasisType.farm)).toBeInTheDocument();
-    expect(within(dialog).getByText(mapRu.sheet.oasisNoScout)).toBeInTheDocument();
-    expect(within(dialog).queryByText(mapRu.scout.action)).not.toBeInTheDocument();
+
+    // Default fixture troops: [] — no scouts at home, so the scout action is offered but
+    // disabled, not merely absent.
+    const scoutButton = within(dialog).getByText(mapRu.scout.action);
+    expect(scoutButton).toBeDisabled();
+    expect(within(dialog).getByText(mapRu.scout.noScoutsAtHome)).toBeInTheDocument();
+
+    // §10: support has nothing to hold at an oasis — never offered as a type option.
+    expect(within(dialog).queryByText(militaryRu.movementType.support)).not.toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

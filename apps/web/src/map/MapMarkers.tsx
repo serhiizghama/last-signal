@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react';
+import { isBeginnerProtected } from '@last-signal/game-core';
 import { useTranslation } from 'react-i18next';
 
 import type { Faction, MapOasisView, MapSettlementView } from '../api/types';
@@ -14,6 +15,8 @@ interface MapMarkersProps {
   center: Tile;
   tileSizePx: number;
   viewport: ViewportSizePx;
+  /** The server clock, ticking (`useServerClock` in `MapScreen`) — §11 requires beginner protection to be judged against it, never the browser's own clock. */
+  serverNow: number;
 }
 
 function isWithinRange(range: TileRange, x: number, y: number): boolean {
@@ -42,6 +45,7 @@ export function MapMarkers({
   center,
   tileSizePx,
   viewport,
+  serverNow,
 }: MapMarkersProps): ReactElement {
   const { t } = useTranslation('map');
 
@@ -70,35 +74,42 @@ export function MapMarkers({
       {visibleSettlements.map((settlement) => {
         const { left, top } = tileTopLeftPx(settlement, center, tileSizePx, viewport);
         const isOwn = settlement.ownerAccountId === ownAccountId;
+        // §11: present on the wire only while actually still in effect (`buildMapSettlementView`'s
+        // own comment), so this needs no extra "has it lapsed" check of its own — the same
+        // `isBeginnerProtected(protectedUntil, serverNow)` call the tile sheet and the server
+        // both use, never a re-derivation of the rule.
+        const isProtected = isBeginnerProtected(settlement.protectedUntil, serverNow);
         const factionClass = settlement.ownerFaction
           ? FACTION_MODIFIER[settlement.ownerFaction]
           : '';
         const sideClass = settlement.ownerSide ? `map-marker--side-${settlement.ownerSide}` : '';
         const ownClass = isOwn ? 'map-marker--own' : '';
+        const protectedClass = isProtected ? 'map-marker--protected' : '';
         const className = [
           'map-marker',
           'map-marker--settlement',
           factionClass,
           sideClass,
           ownClass,
+          protectedClass,
         ]
           .filter(Boolean)
           .join(' ');
+        const ownerTitle = isOwn
+          ? t('ownSettlement')
+          : t('settlementLabel', { name: settlement.name, owner: settlement.ownerName });
 
         return (
           <div
             key={settlement.id}
             className={className}
             style={{ left, top, width: tileSizePx, height: tileSizePx }}
-            title={
-              isOwn
-                ? t('ownSettlement')
-                : t('settlementLabel', { name: settlement.name, owner: settlement.ownerName })
-            }
+            title={isProtected ? `${ownerTitle} — ${t('sheet.protectedBadge')}` : ownerTitle}
             data-x={settlement.x}
             data-y={settlement.y}
             data-marker="settlement"
             data-own={isOwn ? 'true' : 'false'}
+            data-protected={isProtected ? 'true' : 'false'}
             data-settlement-id={settlement.id}
           />
         );

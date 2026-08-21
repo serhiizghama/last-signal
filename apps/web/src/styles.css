@@ -7,6 +7,10 @@
   --bone: #e8d9b0;
   --toxic: #7fd13b;
   --danger: #b33a2b;
+  /* M3e.3's beginner-protection badge (§11): a distinct hue from every other marker/side tint
+     already in use (accent, teal, toxic, danger) so "protected" reads as its own signal, not a
+     variant of an existing one. */
+  --shield: #4fb3d9;
   /* A touch darker than --bg-deep, used only for the Map screen's "beyond the world" void
      (M2c.1 edge fix): the bounded map has a deliberate edge (§1), so the area outside it needs
      to read as "this is off the edge of the wasteland" rather than "the map failed to render". */
@@ -560,6 +564,69 @@ img {
   font-size: 0.85rem;
 }
 
+/* Units tab (M3e.2) */
+.units-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 8px;
+}
+
+.unit-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+
+.army-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.army-overview__group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 2px solid var(--panel-edge);
+}
+
+.army-overview__contingents {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.army-overview__contingent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--bg-deep);
+  border: 2px solid var(--panel-edge);
+}
+
+.army-overview__food {
+  font-size: 0.8rem;
+  color: var(--accent);
+}
+
+.army-overview__net {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 2px solid var(--panel-edge);
+  font-size: 0.85rem;
+}
+
 .bottom-nav {
   position: sticky;
   bottom: 0;
@@ -780,6 +847,14 @@ img {
   box-shadow: 0 0 0 3px var(--accent);
 }
 
+/* Beginner protection badge (§11, M3e.3) — an `outline`, not `box-shadow`, so it composes
+   with `.map-marker--own`'s box-shadow instead of one silently overwriting the other when a
+   marker carries both modifiers at once (a freshly-founded own settlement, still protected). */
+.map-marker--protected::after {
+  outline: 2px dashed var(--shield);
+  outline-offset: 2px;
+}
+
 /* Tile info sheet + send-scout flow (M2c.2) */
 
 .tile-sheet-backdrop {
@@ -860,6 +935,52 @@ img {
   margin: 0;
   font-size: 0.8rem;
   opacity: 0.85;
+}
+
+.tile-sheet__badge--protected {
+  color: var(--shield);
+  font-weight: 600;
+}
+
+/* The raid/assault/support form (M3e.3) — same container rhythm as `.tile-sheet__scout`
+   above so the two read as one visual family, one per movement kind offered on this tile. */
+.tile-sheet__attack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 2px solid var(--panel-edge);
+}
+
+.attack-form__type {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.attack-form__type-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.attack-form__unit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attack-form__unit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 /* Own-movements overlay (M2c.2) */

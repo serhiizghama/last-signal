@@ -5,9 +5,11 @@ import { InjectModel } from '@nestjs/mongoose';
 import type { ClientSession, Model, Types } from 'mongoose';
 
 import { GAME_CONFIG } from '../../game-config/game-config.tokens';
-import type { EventHandler } from '../../scheduler/event-handler.interface';
+import { NotificationsService } from '../../notifications/notifications.service';
 import { EventSchedulerService } from '../../scheduler/event-scheduler.service';
+import type { EventHandler } from '../../scheduler/event-handler.interface';
 import type { GameEventDocument } from '../../schemas/event.schema';
+import { NOTIFICATION_KIND_TROOPS_STARVING } from '../../schemas/notification.schema';
 import type { ReportDocument } from '../../schemas/report.schema';
 import { REPORT_TYPE_STARVATION, Report } from '../../schemas/report.schema';
 import type { SettlementDocument, StationedContingent } from '../../schemas/settlement.schema';
@@ -59,6 +61,7 @@ export class StarvationTickHandler implements EventHandler {
     @Inject(EventSchedulerService) private readonly eventScheduler: EventSchedulerService,
     @Inject(SettlementsService) private readonly settlementsService: SettlementsService,
     @Inject(GAME_CONFIG) private readonly config: GameConfig,
+    @Inject(NotificationsService) private readonly notificationsService: NotificationsService,
   ) {}
 
   async handle(event: GameEventDocument, session: ClientSession): Promise<void> {
@@ -324,6 +327,20 @@ export class StarvationTickHandler implements EventHandler {
     // with both a session and more than one document (the owner report plus one per
     // affected supporter) — every other handler in this codebase only ever creates one
     // report at a time, so this requirement never came up before.
-    await this.reportModel.create(reports, { session, ordered: true });
+    const created = await this.reportModel.create(reports, { session, ordered: true });
+
+    // §16's `troopsStarving` trigger — one per recipient, mirroring the report list above
+    // exactly (the settlement owner, plus each affected supporter): the same 1:1 shape
+    // `BattleArrivalResolver`/`OasisBattleArrivalResolver` use for `battleReportArrived` via
+    // `NotificationsService.enqueueForReports`, but a distinct kind — a starving supporter's
+    // troops dying is not a "battle report" (§15/§16 name it separately).
+    for (const report of created) {
+      await this.notificationsService.enqueue(
+        report.accountId,
+        NOTIFICATION_KIND_TROOPS_STARVING,
+        { reportId: String(report._id) },
+        session,
+      );
+    }
   }
 }

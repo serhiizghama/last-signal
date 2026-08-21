@@ -20,6 +20,7 @@ import { Settlement } from '../../schemas/settlement.schema';
 import type { SettlementDocument } from '../../schemas/settlement.schema';
 import {
   currentLevelOf,
+  defenceTroopsOf,
   toBuildingLevels,
   toTroopCounts,
 } from '../../settlements/settlements.util';
@@ -82,14 +83,12 @@ export class ScoutArrivalResolver implements MovementArrivalResolver {
 
     const result = resolveScouting(this.config, {
       attackers: toTroopCounts(movement.units),
-      // Deliberately `troops` alone, not `upkeepTroopsOf` — scout-vs-scout resolution is
-      // defended by scouts physically at home (§8's model, unchanged by M3a.4). Future
-      // obligation, recorded here rather than guessed at: design record §8 says stationed
-      // scouts must also count for the host's scout defence and for detection, so M3c must
-      // widen this to include `targetDoc.stationedTroops` once the `support` movement can
-      // actually populate it — mirrors how `sendMovement`'s role-check comment records its
-      // own future obligations rather than guessing at them.
-      defenderHomeTroops: toTroopCounts(targetDoc.troops),
+      // `defenceTroopsOf`, not `troops` alone and not `upkeepTroopsOf` — §8 requires stationed
+      // scouts to count for the host's scout defence and for detection (M3c.6, now honoured:
+      // `SupportArrivalResolver` populates `targetDoc.stationedTroops`, so this union already
+      // includes any stationed scout contingent), while `awayTroops` must stay excluded either
+      // way — a scout in transit cannot defend or detect anything at the settlement it left.
+      defenderHomeTroops: defenceTroopsOf(targetDoc),
       attackerRadioTowerLevel: currentLevelOf(attackerBuildings, 'radioTower'),
       defenderRadioTowerLevel: currentLevelOf(defenderBuildings, 'radioTower'),
       defenderResources: toPlainResourceValues(targetDoc.resources.values),

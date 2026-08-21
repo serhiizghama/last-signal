@@ -5,6 +5,7 @@ import buildingsRu from './locales/ru/buildings.json';
 import commonRu from './locales/ru/common.json';
 import errorsRu from './locales/ru/errors.json';
 import mapRu from './locales/ru/map.json';
+import militaryRu from './locales/ru/military.json';
 import reportsRu from './locales/ru/reports.json';
 import resourcesRu from './locales/ru/resources.json';
 import unitsRu from './locales/ru/units.json';
@@ -28,6 +29,10 @@ export const resources = {
     // Reserved by M1 §15, filled in by M2c.3's Reports tab (§8/§11): every scout-report string
     // the client renders from the server's structured `payload`.
     reports: reportsRu,
+    // New in M3e.2 (§17): the Units tab's own strings — stat labels and the army-overview's
+    // home/away/stationed grouping and its §3 Food explanation. Unit *names* stay in `units`
+    // above; this namespace is everything around them.
+    military: militaryRu,
   },
 } as const;
 

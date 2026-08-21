@@ -12,8 +12,10 @@ import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 // `supportLoss` (written to a supporter whose stationed contingent took casualties),
 // `oasisRaid` (an oasis raid's own report — defenders met, losses, Food taken),
 // and `buildingDestroyed` (written to the defender when a siege pass knocks a level off).
-// `settle` and `trade` are the only two of §15's eleven kinds still missing — they land
-// with M3d, alongside the founding and market flows that produce them.
+// M3d.1 adds `settle` — written to the sender, carrying either the newly founded
+// settlement's id or the reason the founding failed (§13/§15). M3d.3 adds `trade` — written
+// to both parties of an accepted offer (§14/§15) — the last of §15's eleven kinds; **every
+// report type §15 names now exists.**
 export type ReportType =
   | 'scout'
   | 'scoutFailed'
@@ -24,7 +26,9 @@ export type ReportType =
   | 'defense'
   | 'supportLoss'
   | 'oasisRaid'
-  | 'buildingDestroyed';
+  | 'buildingDestroyed'
+  | 'settle'
+  | 'trade';
 const REPORT_TYPES: ReportType[] = [
   'scout',
   'scoutFailed',
@@ -36,6 +40,8 @@ const REPORT_TYPES: ReportType[] = [
   'supportLoss',
   'oasisRaid',
   'buildingDestroyed',
+  'settle',
+  'trade',
 ];
 
 export const REPORT_TYPE_SCOUT: ReportType = 'scout';
@@ -48,6 +54,8 @@ export const REPORT_TYPE_DEFENSE: ReportType = 'defense';
 export const REPORT_TYPE_SUPPORT_LOSS: ReportType = 'supportLoss';
 export const REPORT_TYPE_OASIS_RAID: ReportType = 'oasisRaid';
 export const REPORT_TYPE_BUILDING_DESTROYED: ReportType = 'buildingDestroyed';
+export const REPORT_TYPE_SETTLE: ReportType = 'settle';
+export const REPORT_TYPE_TRADE: ReportType = 'trade';
 
 export type ReportDocument = HydratedDocument<Report>;
 

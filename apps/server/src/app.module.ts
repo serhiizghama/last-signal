@@ -10,7 +10,9 @@ import { DevSeedModule } from './dev/dev-seed.module';
 import { GameConfigModule } from './game-config/game-config.module';
 import { HealthModule } from './health/health.module';
 import { MapModule } from './map/map.module';
+import { MarketModule } from './market/market.module';
 import { MovementsModule } from './movements/movements.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { NpcModule } from './npc/npc.module';
 import { PlacementModule } from './placement/placement.module';
 import { RealtimeModule } from './realtime/realtime.module';
@@ -34,8 +36,10 @@ import { WorldModule } from './world/world.module';
     WorldModule,
     NpcModule,
     MapModule,
+    MarketModule,
     RealtimeModule,
     ReportsModule,
+    NotificationsModule,
     DevSeedModule,
   ],
 })

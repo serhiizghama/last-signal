@@ -259,7 +259,86 @@ export interface GameConfig {
    * account's first-settlement creation instant — no building governs it.
    */
   protection: ProtectionConfig;
+  /**
+   * Added in M3d.1 (§13 of the M3 design record): the settler convoy's Influence-gated
+   * founding. Top-level and distinct from any `buildings.*` block — there is no "settle"
+   * building — for the same reason `oasis` / `radioTower` / `protection` above are kept
+   * top-level: this is convoy/founding tuning, not a building-progression curve. The
+   * Influence gate itself stays exactly `config.influence` (M1 §7, unchanged) — this block
+   * only adds the one new number §13 needs on top of it.
+   */
+  settle: SettleConfig;
+  /**
+   * Added in M3d.2 (§14 of the M3 design record): the offer board's own tuning — merchant
+   * count per Market level, the offer ratio cap, offer TTL, the weighted-value table the
+   * ratio cap and the world exchange both read, and the exchange's own spread/trip time.
+   * Top-level and distinct from `buildings.market` (the Market building's cost/level curve),
+   * for the same reason `oasis` / `radioTower` / `protection` / `settle` above are kept
+   * top-level: this is market/economy tuning, not a building-progression curve. Landed as one
+   * block covering the whole of §14 — including `exchangeSpread`/`exchangeTripMs`, which
+   * M3d.2 has no reader for (see `MarketConfig`'s own field comments) — rather than two
+   * separate edits, the same call M3c.1 made landing `oasis`/`radioTower`/`protection`
+   * together.
+   */
+  market: MarketConfig;
+  /**
+   * Added in M3d.2 (§14): merchants are not units (§14 is explicit about this) — no cost, no
+   * training path, no `config.units` entry. Just a faction-flavoured capacity and speed,
+   * looked up here. Top-level for the same reason `market` above is.
+   */
+  merchant: MerchantConfig;
   map: MapConfig;
+}
+
+/**
+ * Added in M3d.2 (§14 of the M3 design record): the Market board's tuning. See
+ * `GameConfig.market` for why this lives top-level rather than under `buildings.market`.
+ */
+export interface MarketConfig {
+  /** Merchants per settlement = `merchantsPerLevel * Market level` (§14). Draft 1. */
+  merchantsPerLevel: number;
+  /**
+   * The offer ratio cap (§14): `1/maxOfferRatio <= give/want <= maxOfferRatio`, in weighted
+   * value (`valueWeights` below). Draft 2 -> an offer may ask for as little as half, or as
+   * much as double, what it gives, in weighted terms — see `isOfferRatioLegal`'s own comment
+   * for the boundary convention (is exactly the ratio itself legal).
+   */
+  maxOfferRatio: number;
+  /** How long a posted offer stays open before `tradeOfferExpire` fires (§14). Draft 48h in ms. */
+  offerTtlMs: number;
+  /**
+   * Weighted value per unit of each resource kind — shared by the ratio cap above AND (M3d.4)
+   * the world exchange's own conversion math, per §14: "draft `valueWeights = {scrap 1, fuel
+   * 1, food 1, electronics 2}`". Electronics is weighted double, same rationale M1 §1 already
+   * gives for making it the game's deliberate bottleneck.
+   */
+  valueWeights: Record<ResourceKind, number>;
+  /**
+   * The world exchange's spread (§14: every conversion loses this fraction of value, which is
+   * what lets the exchange need no daily cap or cooldown). **NO READER YET in M3d.2** — the
+   * world exchange itself is M3d.4's deliverable. Landed now, with the rest of this block, per
+   * the M3d.2 brief's "one config edit is cleaner than two" (M3c.1's own precedent). Draft
+   * 0.25.
+   */
+  exchangeSpread: number;
+  /**
+   * How long the world exchange occupies merchants per conversion (§14) — nothing travels the
+   * map for it (no counterparty), it just ties up merchant capacity for this long. **NO
+   * READER YET in M3d.2** — see `exchangeSpread` above for why this field exists already
+   * regardless. Draft 30min in ms.
+   */
+  exchangeTripMs: number;
+}
+
+/**
+ * Added in M3d.2 (§14 of the M3 design record): merchant capacity and speed, by faction. See
+ * `GameConfig.merchant` for why this lives top-level rather than as a `config.units` entry.
+ */
+export interface MerchantConfig {
+  /** Loot/carry capacity per merchant, by faction (§14's table). Draft 1000/500/750. */
+  capacityByFaction: Record<Faction, number>;
+  /** Merchant travel speed, fields/hour at classic x1, by faction (§14's table). Draft 12/16/24. */
+  speedByFaction: Record<Faction, number>;
 }
 
 /**
@@ -407,6 +486,21 @@ export interface RadioTowerConfig {
 export interface ProtectionConfig {
   /** How long protection holds from the account's first settlement being created (§11). Draft 72h in ms. */
   durationMs: number;
+}
+
+/**
+ * Added in M3d.1 (§13 of the M3 design record): the settler convoy's Influence-gated
+ * founding. See `GameConfig.settle` for why this lives top-level.
+ */
+export interface SettleConfig {
+  /**
+   * Settlers required — and consumed — to found a new settlement (owner decision 3: "Three
+   * 'Settler' units, trained at the Command Center"). Draft 3, sweepable by tools/sim in M4
+   * like everything else in this file. The Influence threshold that gates *whether* an
+   * account may found at all is unaffected by this number — it lives in `config.influence`
+   * (M1 §7) and is checked via `calcInfluence`/`settlementsAllowed`, never here.
+   */
+  settlersRequired: number;
 }
 
 /**

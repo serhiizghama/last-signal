@@ -142,6 +142,33 @@ export const DEFAULT_CONFIG: GameConfig = {
   protection: {
     durationMs: 259_200_000, // 72h
   },
+  // Added in M3d.1 (§13 of the M3 design record): founding costs 3 Settlers (owner decision
+  // 3) — trained at the Command Center (M3a.1's `settler` catalogue entry), consumed on
+  // founding, gated by the *existing* `config.influence` threshold (M1 §7), never a new one.
+  // A draft number, sweepable by tools/sim in M4 like everything else in this file.
+  settle: {
+    settlersRequired: 3,
+  },
+  // Added in M3d.2 (§14 of the M3 design record): the offer board's tuning. Every number here
+  // is a draft, sweepable by tools/sim in M4 like everything else in this file — including
+  // `exchangeSpread`/`exchangeTripMs`, which have no reader until M3d.4 (the world exchange)
+  // ships; they land now, with the rest of §14's numbers, rather than in a second config edit
+  // (M3c.1's own precedent for landing several blocks at once).
+  market: {
+    merchantsPerLevel: 1,
+    maxOfferRatio: 2,
+    offerTtlMs: 172_800_000, // 48h
+    valueWeights: { scrap: 1, fuel: 1, electronics: 2, food: 1 },
+    exchangeSpread: 0.25, // M3d.4
+    exchangeTripMs: 1_800_000, // 30min, M3d.4
+  },
+  // Added in M3d.2 (§14): merchants are not units — no `config.units` entry, no cost, no
+  // training path — just a faction-flavoured capacity and speed, per §14's table. A draft
+  // pair, sweepable by tools/sim in M4 like everything else in this file.
+  merchant: {
+    capacityByFaction: { raiders: 1000, engineers: 500, nomads: 750 },
+    speedByFaction: { raiders: 12, engineers: 16, nomads: 24 },
+  },
   // Added in M2a.1 (§1, §2, §3 of the M2 design record): map geometry, derived terrain,
   // farm oases and the center-out expanding spawn policy. All draft numbers, sweepable by
   // tools/sim like everything else in this file.

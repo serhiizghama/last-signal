@@ -7,6 +7,7 @@ import type { AccountView, SettlementStateView } from '../api/types';
 import type { NavTab } from '../base/BottomNav';
 import { BottomNav } from '../base/BottomNav';
 import { ErrorPanel, LoadingPanel } from '../components/StatusPanels';
+import { useServerClock } from '../hooks/useServerClock';
 import { MapGrid } from './MapGrid';
 import { MapMarkers } from './MapMarkers';
 import { MovementsOverlay } from './MovementsOverlay';
@@ -51,6 +52,13 @@ export function MapScreen({ account, settlement, onNavigateTab }: MapScreenProps
   const { t } = useTranslation('map');
   const mapQuery = useMapQuery();
   const [containerRef, viewport] = useElementSize<HTMLDivElement>();
+  // §11: beginner protection is judged against the server clock, never the browser's own —
+  // anchored on the map payload's own `world.serverTime` (the same convention
+  // `MovementsOverlay` already uses for its own countdowns) and threaded down to both
+  // `MapMarkers`' protection badge and `TileInfoSheet`'s so the two can never disagree about
+  // "now". Falls back to 0 only before the first `GET /api/map` response lands, at which
+  // point neither consumer is actually rendered yet (both are gated on `mapQuery.data`).
+  const serverNow = useServerClock(mapQuery.data?.world.serverTime) ?? 0;
 
   const [center, setCenter] = useState<Tile>({ x: settlement.x, y: settlement.y });
   const [zoomIndex, setZoomIndex] = useState<ZoomIndex>(DEFAULT_ZOOM_INDEX);
@@ -261,6 +269,7 @@ export function MapScreen({ account, settlement, onNavigateTab }: MapScreenProps
             center={center}
             tileSizePx={tileSizePx}
             viewport={viewport}
+            serverNow={serverNow}
           />
         </div>
       )}
@@ -273,6 +282,7 @@ export function MapScreen({ account, settlement, onNavigateTab }: MapScreenProps
           account={account}
           settlement={settlement}
           tile={selectedTile}
+          serverNow={serverNow}
           onClose={() => setSelectedTile(null)}
         />
       )}

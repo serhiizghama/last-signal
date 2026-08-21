@@ -1,3 +1,4 @@
+import { isBeginnerProtected } from '@last-signal/game-core';
 import type { INestApplication } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import type { TestingModule } from '@nestjs/testing';
@@ -50,6 +51,9 @@ describe('GET /api/map (integration)', () => {
     // Bootstraps the world + oases and seeds the 2 NPCs as a side effect, exactly like a real
     // fresh boot.
     await app.init();
+    // Explicit IPv4-bound single listener — avoids ephemeral-port collisions with other
+    // local processes; see `accounts.integration.spec.ts`'s beforeAll for why this matters.
+    await app.listen(0, '127.0.0.1');
 
     worldModel = moduleRef.get(getModelToken(World.name));
     oasisModel = moduleRef.get(getModelToken(Oasis.name));
@@ -120,6 +124,13 @@ describe('GET /api/map (integration)', () => {
     const humanEntry = response.body.settlements.find(
       (s: { id: string }) => s.id === humanSettlement.id,
     );
+    // `protectedUntil` (M3c.8, §11/§19.8) is present here because `humanAccountId` really is
+    // still within its 72 h beginner-protection window at this point in the suite (stamped
+    // the moment `POST /api/settlements` created `humanSettlement` in `beforeAll`, seconds
+    // before this test runs) — read from the account itself rather than hardcoded, so this
+    // assertion can't silently drift from `config.protection.durationMs`.
+    const humanAccount = await accountModel.findById(humanAccountId);
+    expect(isBeginnerProtected(humanAccount!.protectedUntil, Date.now())).toBe(true);
     expect(humanEntry).toEqual({
       id: humanSettlement.id,
       x: humanSettlement.x,
@@ -129,12 +140,18 @@ describe('GET /api/map (integration)', () => {
       ownerName: 'Map Tester',
       ownerFaction: 'raiders',
       ownerSide: 'beacon',
+      protectedUntil: humanAccount!.protectedUntil,
     });
 
     // Guards against a serialization leak specifically (a field present on the Mongoose
     // document but accidentally spread/forwarded into the response), not just against the
     // typed `MapSettlementView` shape being clean — see `toPlainResources`'s comment in
-    // `settlements.view.ts` for why that distinction matters.
+    // `settlements.view.ts` for why that distinction matters. Extended (not replaced) for
+    // M3c.8: the account projection powering `protectedUntil` was widened to read straight
+    // off `Account` documents (`MapService.getMapView`), so this guard now also covers every
+    // OTHER `Account` field that projection could have accidentally carried along —
+    // `§19.8`'s "only `protectedUntil` is added" is exactly the property these five extra
+    // entries assert.
     const serialized = JSON.stringify(response.body);
     for (const leakedField of [
       'resources',
@@ -143,9 +160,40 @@ describe('GET /api/map (integration)', () => {
       'troops',
       'isNpc',
       'version',
+      'tgId',
+      'contribution',
+      'medals',
+      'settings',
+      'sideChangedAt',
     ]) {
       expect(serialized).not.toContain(leakedField);
     }
+  });
+
+  // M3c.8, §11/§19.8: "the map marks the settlement as protected so nobody wastes a march."
+  // `humanSettlement`'s account is still genuinely protected (see the test above); a fresh
+  // NPC settlement's account never is (`Account.protectedUntil`'s own schema comment — NPCs
+  // are seeded via `insertMany`, bypassing the stamping call site entirely).
+  it('M3c.8: a still-protected account exposes protectedUntil on the map; an NPC settlement (never protected) omits it', async () => {
+    const npcAccounts = await accountModel.find({ isNpc: true });
+    const npcSettlement = await settlementModel.findOne({
+      accountId: { $in: npcAccounts.map((a) => a._id) },
+    });
+    expect(npcSettlement).not.toBeNull();
+    const npcAccount = npcAccounts.find((a) => a._id.equals(npcSettlement!.accountId));
+    expect(isBeginnerProtected(npcAccount!.protectedUntil, Date.now())).toBe(false);
+
+    const response = await request(app.getHttpServer()).get('/api/map').set('Cookie', humanCookie);
+    const humanEntry = response.body.settlements.find(
+      (s: { id: string }) => s.id === humanSettlement.id,
+    );
+    const npcEntry = response.body.settlements.find(
+      (s: { id: string }) => s.id === String(npcSettlement!._id),
+    );
+
+    expect(typeof humanEntry.protectedUntil).toBe('number');
+    expect(npcEntry.protectedUntil).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(npcEntry, 'protectedUntil')).toBe(false);
   });
 
   it('all oases appear with coordinates and type, and the payload carries no terrain', async () => {
@@ -178,7 +226,20 @@ describe('GET /api/map (integration)', () => {
       (s: { id: string }) => s.id === humanSettlement.id,
     );
     expect(npcEntry).toBeDefined();
-    expect(Object.keys(npcEntry).sort()).toEqual(Object.keys(humanEntry).sort());
+    // `protectedUntil` is excluded from this comparison on purpose (M3c.8, §11/§19.8): while
+    // `humanSettlement`'s account is still within its 72 h beginner-protection window, the
+    // map is REQUIRED to mark it — that is the entire point of Deliverable 2 — so a currently
+    // -protected human settlement legitimately carries one key an NPC (never protected) never
+    // does. That is a real, intentional, temporary distinguishing signal, not a leaked
+    // marker; its presence/absence is covered directly by the dedicated M3c.8 test above.
+    // Every OTHER field must still match exactly, which is what this assertion still checks.
+    const npcKeys = Object.keys(npcEntry)
+      .filter((k) => k !== 'protectedUntil')
+      .sort();
+    const humanKeys = Object.keys(humanEntry)
+      .filter((k) => k !== 'protectedUntil')
+      .sort();
+    expect(npcKeys).toEqual(humanKeys);
   });
 
   it('a settlement created after the first call shows up on the next call (no stale server-side caching)', async () => {

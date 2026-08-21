@@ -60,8 +60,9 @@ describe('Reports (integration)', () => {
     await app.init();
     // The WS scenarios below need a real listening port — see `realtime.integration.spec.ts`
     // for why `supertest(app.getHttpServer())` alone (used for every REST call here too)
-    // isn't enough for a raw websocket upgrade.
-    await app.listen(0);
+    // isn't enough for a raw websocket upgrade. Binding `127.0.0.1` explicitly (not just
+    // `listen(0)`) matters too — see `accounts.integration.spec.ts`'s beforeAll for why.
+    await app.listen(0, '127.0.0.1');
     const address = app.getHttpServer().address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
 

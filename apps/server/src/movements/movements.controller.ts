@@ -13,9 +13,11 @@ import {
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentAccount } from '../auth/current-account.decorator';
 import type { AccountDocument } from '../schemas/account.schema';
+import { EvictMovementDto } from './dto/evict-movement.dto';
+import { RecallMovementDto } from './dto/recall-movement.dto';
 import { SendMovementDto } from './dto/send-movement.dto';
 import { MovementsService } from './movements.service';
-import type { MovementView } from './movements.view';
+import type { IncomingMovementsView, MovementView } from './movements.view';
 
 // Every route here is ownership-checked (§ M1b/M2b.3 convention): `MovementsService` verifies
 // the resolved account actually owns the settlement/movement id involved before
@@ -35,6 +37,17 @@ export class MovementsController {
   @Get('mine')
   async mine(@CurrentAccount() account: AccountDocument): Promise<MovementView[]> {
     return this.movementsService.listMine(account._id, Date.now());
+  }
+
+  // M3c.8, §12: everything currently inbound to any of the caller's OWN settlements, tiered
+  // per movement by that settlement's own Radio Tower level — see
+  // `MovementsService.listIncoming`'s own comment for the full selection/tiering rules.
+  // Registered next to `GET mine` for the same reason that route sits before `POST
+  // :id/cancel`: a literal path segment (`incoming`) never collides with a parameterised
+  // sibling regardless of order, but this keeps every literal-segment `GET` grouped together.
+  @Get('incoming')
+  async incoming(@CurrentAccount() account: AccountDocument): Promise<IncomingMovementsView> {
+    return this.movementsService.listIncoming(account._id, Date.now());
   }
 
   @Post()
@@ -63,5 +76,41 @@ export class MovementsController {
     @Param('id') id: string,
   ): Promise<MovementView> {
     return this.movementsService.cancelMovement(id, account._id, Date.now());
+  }
+
+  // §8's recall — issued by the stationed contingent's OWNER. Registered as a literal
+  // `recall` segment, not `:id/...`, so it never collides with the parameterised `:id/cancel`
+  // route above regardless of order (a recall has no existing movement id to key off of — it
+  // creates a brand-new one, see `MovementsService.returnStationedContingent`'s own comment).
+  @Post('recall')
+  @HttpCode(HttpStatus.OK)
+  async recall(
+    @CurrentAccount() account: AccountDocument,
+    @Body() dto: RecallMovementDto,
+  ): Promise<MovementView> {
+    return this.movementsService.recallSupport(
+      dto.hostSettlementId,
+      dto.fromSettlementId,
+      account._id,
+      Date.now(),
+    );
+  }
+
+  // §8's eviction — issued by the HOST, naming somebody else's contingent by its
+  // owner/origin pair. The mitigation for §3's support-griefing edge: a host being starved by
+  // a guest can always send it home unilaterally.
+  @Post('evict')
+  @HttpCode(HttpStatus.OK)
+  async evict(
+    @CurrentAccount() account: AccountDocument,
+    @Body() dto: EvictMovementDto,
+  ): Promise<MovementView> {
+    return this.movementsService.evictSupport(
+      dto.hostSettlementId,
+      dto.ownerAccountId,
+      dto.fromSettlementId,
+      account._id,
+      Date.now(),
+    );
   }
 }

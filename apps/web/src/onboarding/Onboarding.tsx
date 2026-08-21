@@ -12,6 +12,7 @@ import { ErrorPanel, LoadingPanel } from '../components/StatusPanels';
 import { MapScreen } from '../map/MapScreen';
 import { useReportsRealtime } from '../realtime/useReportsRealtime';
 import { ReportsScreen } from '../reports/ReportsScreen';
+import { UnitsScreen } from '../units/UnitsScreen';
 import { CreateSettlementScreen } from './CreateSettlementScreen';
 import { RegisterScreen } from './RegisterScreen';
 import { WelcomeScreen } from './WelcomeScreen';
@@ -91,6 +92,12 @@ function SettlementGate({ account }: SettlementGateProps): ReactElement {
 
   if (activeTab === 'reports') {
     return <ReportsScreen onNavigateTab={setActiveTab} />;
+  }
+
+  if (activeTab === 'units') {
+    return (
+      <UnitsScreen settlement={firstSettlement} account={account} onNavigateTab={setActiveTab} />
+    );
   }
 
   return <BaseScreen settlement={firstSettlement} account={account} onNavigateTab={setActiveTab} />;

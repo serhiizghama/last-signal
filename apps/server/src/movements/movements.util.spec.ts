@@ -56,19 +56,20 @@ describe('sumAttackPoints', () => {
   });
 });
 
-// `isSendableMovementType` narrows the DTO's raw `type: string` to the four types
-// `sendMovement` can actually produce (M3c.3, §9) — `settle`/`trade` reached the `Movement`
-// schema's storage-level union in M3c.2 but have no send path yet (M3d owns them).
+// `isSendableMovementType` narrows the DTO's raw `type: string` to the five types
+// `sendMovement` can actually produce (M3c.3 shipped four, §9; M3d.1 adds `settle`, §13).
+// `trade` reached the `Movement` schema's storage-level union in M3c.2 but still has no send
+// path — the Market is a later M3d step.
 describe('isSendableMovementType', () => {
-  it('is true for scout, raid, assault and support', () => {
+  it('is true for scout, raid, assault, support and settle', () => {
     expect(isSendableMovementType('scout')).toBe(true);
     expect(isSendableMovementType('raid')).toBe(true);
     expect(isSendableMovementType('assault')).toBe(true);
     expect(isSendableMovementType('support')).toBe(true);
+    expect(isSendableMovementType('settle')).toBe(true);
   });
 
-  it('is false for settle and trade — schema-widened in M3c.2, no send path until M3d', () => {
-    expect(isSendableMovementType('settle')).toBe(false);
+  it('is false for trade — schema-widened in M3c.2, no send path yet (the Market)', () => {
     expect(isSendableMovementType('trade')).toBe(false);
   });
 

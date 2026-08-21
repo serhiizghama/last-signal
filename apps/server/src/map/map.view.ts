@@ -1,3 +1,5 @@
+import { isBeginnerProtected } from '@last-signal/game-core';
+
 import type { AccountDocument, Faction, Side } from '../schemas/account.schema';
 import type { OasisDocument, OasisType } from '../schemas/oasis.schema';
 import type { SettlementDocument } from '../schemas/settlement.schema';
@@ -34,6 +36,21 @@ export interface MapWorldView {
 // client highlight the caller's own settlements against its own (already-known, from
 // `GET /api/auth/me`) account id without a second round trip. Account ids are opaque ObjectId
 // strings and carry no private information on their own.
+//
+// `protectedUntil` (M3c.8, §11/§19.8) is the ONE deliberate, scoped exception to "an NPC must
+// be indistinguishable from a human one" above: §11 requires the map to mark a beginner-
+// protected settlement "so nobody wastes a march", which is a real, functionally necessary
+// asymmetry between a freshly-founded human account (protected) and an NPC (never protected,
+// `Account.protectedUntil` is always `undefined` for them — that schema field's own comment
+// explains why). §19.8 is explicit that this is the *only* addition permitted here: "must not
+// be relaxed to show protection status plus anything else." Present only while protection is
+// still actually in effect (`isBeginnerProtected` at the time this view is built) — an
+// account whose 72 h has already lapsed goes back to being indistinguishable from an NPC, the
+// same as it always was; the field is not left dangling with a stale past timestamp forever
+// just because the account happens to have founded through the normal path once. Optional and
+// raw-timestamp, not a precomputed `isProtected: boolean` — the client derives the badge (and
+// can run its own countdown) via the same `isBeginnerProtected(protectedUntil, serverTime)`
+// this file uses server-side, never a boolean this view would otherwise have to invent.
 export interface MapSettlementView {
   id: string;
   x: number;
@@ -43,6 +60,7 @@ export interface MapSettlementView {
   ownerName: string;
   ownerFaction?: Faction;
   ownerSide?: Side;
+  protectedUntil?: number;
 }
 
 // One oasis (§2, §8): public and inert in M2 — coordinates and type only, nothing to scout or
@@ -76,10 +94,12 @@ export function buildMapOasisView(oasis: OasisDocument): MapOasisView {
 // Pure reshape of a settlement document plus its already-resolved owner account into the wire
 // view. `owner` is passed in rather than looked up here — `MapService` is the one place that
 // knows how ownership was batch-resolved (see its own comment for why: two queries joined in
-// memory, not a per-settlement lookup).
+// memory, not a per-settlement lookup). `now` is needed only for the `protectedUntil` gate
+// below — every other field here is a plain, timeless reshape.
 export function buildMapSettlementView(
   settlement: SettlementDocument,
   owner: AccountDocument,
+  now: number,
 ): MapSettlementView {
   return {
     id: String(settlement._id),
@@ -90,5 +110,12 @@ export function buildMapSettlementView(
     ownerName: owner.name,
     ownerFaction: owner.faction,
     ownerSide: owner.side,
+    // Spread so the key is genuinely absent (not present-with-`undefined`, which JSON would
+    // drop anyway but which would still show up in an `Object.keys` comparison against a
+    // Mongoose-document spread) whenever protection isn't currently in effect — see this
+    // field's own doc comment on `MapSettlementView` above for why "currently" matters.
+    ...(isBeginnerProtected(owner.protectedUntil, now)
+      ? { protectedUntil: owner.protectedUntil }
+      : {}),
   };
 }

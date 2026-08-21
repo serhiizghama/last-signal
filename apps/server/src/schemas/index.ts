@@ -6,4 +6,8 @@ export * from './oasis.schema';
 export * from './session.schema';
 export * from './movement.schema';
 export * from './report.schema';
+export * from './trade-offer.schema';
+export * from './market-exchange.schema';
+export * from './notification.schema';
+export * from './change-stream-resume-token.schema';
 export * from './grid.constants';

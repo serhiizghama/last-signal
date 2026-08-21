@@ -4,10 +4,11 @@ import {
   calcNetFoodPerHour,
   calcNetRates,
   calcStorageCaps,
+  merchantsFromMarketLevel,
 } from '@last-signal/game-core';
 
 import type { SettlementDocument } from '../schemas/settlement.schema';
-import { toBuildingLevels, upkeepTroopsOf } from './settlements.util';
+import { currentLevelOf, toBuildingLevels, upkeepTroopsOf } from './settlements.util';
 
 // Mongoose (sub)documents are not plain objects — spreading one (`{ ...doc.resources.values }`)
 // pulls in Mongoose's own internal bookkeeping properties (which circularly reference the
@@ -107,6 +108,17 @@ export interface SettlementStateView {
   stationedTroops: SettlementStationedContingentView[];
   trainingQueue: SettlementTrainingQueueItemView[];
   influence: number;
+  // The Market's own merchant accounting (§14, M3d.4 — the M3e Market tab's own need):
+  // `merchantsTotal` is `merchantsFromMarketLevel(config, marketLevel)`, 0 with no Market
+  // built (`merchantsFromMarketLevel`'s own level-0 case). `merchantsBusy` is the raw
+  // `Settlement.busyMerchants` counter — see that field's schema comment for what occupies
+  // it (an accepted trade leg, M3d.3, or a world-exchange trip, M3d.4). Free merchants
+  // (`merchantsTotal - merchantsBusy`) is not precomputed into a third field: unlike
+  // `ratesPerHour`/`netFoodPerHour` above, it is not itself a `game-core` formula, just a
+  // subtraction of the two already-derived numbers below, which the client (or a future
+  // command) can do itself from these two.
+  merchantsTotal: number;
+  merchantsBusy: number;
   serverTime: number;
 }
 
@@ -167,6 +179,12 @@ export function buildSettlementStateView(
     // Single-settlement Influence: M1a has no multi-settlement accounts yet (M1b), so this
     // is `calcInfluence` applied to just this settlement rather than a real cross-account sum.
     influence: calcInfluence(config, [buildings]),
+    // Every derived number here goes through the matching `game-core` formula — nothing is
+    // computed by hand (this view's own established convention, see this function's header
+    // comment): `merchantsTotal` from `merchantsFromMarketLevel`, `merchantsBusy` straight off
+    // the document (it is already a raw counter, not a derived one — see its schema comment).
+    merchantsTotal: merchantsFromMarketLevel(config, currentLevelOf(buildings, 'market')),
+    merchantsBusy: doc.busyMerchants,
     serverTime: now,
   };
 }

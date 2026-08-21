@@ -11,3 +11,4 @@ export * from './units/index.js';
 export * from './scouting/index.js';
 export * from './combat/index.js';
 export * from './protection.js';
+export * from './market/index.js';

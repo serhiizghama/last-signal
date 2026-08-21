@@ -32,9 +32,9 @@
     "oasisType": {
       "farm": "Пищевой оазис"
     },
-    "oasisNoScout": "Оазисы нельзя разведать в этом раунде.",
     "ownSettlementNote": "Это ваше поселение.",
-    "settlementOwner": "Владелец: {{owner}}"
+    "settlementOwner": "Владелец: {{owner}}",
+    "protectedBadge": "Под защитой новичка"
   },
   "scout": {
     "action": "Разведать",
@@ -52,5 +52,20 @@
     "homeIn": "Возвращение через {{duration}}",
     "target": "Цель: {{x}}:{{y}}",
     "cancel": "Отменить поход"
+  },
+  "attack": {
+    "action": "Атаковать",
+    "typeLabel": "Тип похода",
+    "typeExplanation": "Рейд наносит частичные потери с обеих сторон; штурм — бой на уничтожение обороняющегося и единственный тип похода, который может нести осадные машины.",
+    "available": "Доступно дома: {{count}}",
+    "noEligibleUnits": "Дома нет юнитов, подходящих для этого похода.",
+    "siegeTargetLabel": "Цель осады",
+    "siegeTargetPlaceholder": "Выберите цель",
+    "travelTime": "Время в пути: {{duration}}",
+    "submitLabel": {
+      "raid": "Отправить в рейд",
+      "assault": "Отправить на штурм",
+      "support": "Отправить поддержку"
+    }
   }
 }

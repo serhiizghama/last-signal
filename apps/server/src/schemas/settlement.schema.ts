@@ -246,6 +246,19 @@ export class Settlement {
   @Prop({ type: [StationedContingentSchema], required: true, default: [] })
   stationedTroops!: StationedContingent[];
 
+  // Merchants currently away on an accepted trade or (M3d.4) a world-exchange conversion
+  // (§14). Added in M3d.2, one step ahead of its first writer, the same precedent
+  // `awayTroops`/`stationedTroops` set above — M3d.2 itself wrote nothing here (owner decision
+  // E, "Owner decisions during M3d", `docs/PROGRESS.md`: an offer merely sitting on the board
+  // reserves no merchants at all). M3d.3's `MarketService.acceptOffer` is the first real
+  // writer: it adds each side's own merchant requirement at acceptance, and
+  // `MovementReturnHandler` subtracts it back off, floored at 0, once that leg's own return
+  // lands (§14: "occupied for the whole round trip and freed on return"). `0` for every
+  // settlement created before this field existed — no migration needed, Mongoose applies the
+  // default on read (§19.10).
+  @Prop({ type: Number, required: true, default: 0 })
+  busyMerchants!: number;
+
   // Active training orders (M2b.2, §7; generalized to the full roster in M3a.5, §2). At
   // most `MAX_ACTIVE_ORDERS_PER_BUILDING` (1) entries *per training building* at a time,
   // three buildings wide — an array, not a single optional field, so this widened the same

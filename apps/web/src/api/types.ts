@@ -108,7 +108,13 @@ export interface MapWorldView {
   serverTime: number;
 }
 
-/** Mirrors `MapSettlementView` in `apps/server/src/map/map.view.ts` — public fields only (§5). */
+/**
+ * Mirrors `MapSettlementView` in `apps/server/src/map/map.view.ts` — public fields only (§5).
+ * `protectedUntil` (M3c.8, §11/§19.8) is the one deliberate exception to "public fields only":
+ * present exclusively while beginner protection is still actually in effect, so the map and
+ * the tile sheet can show a protection badge and disable hostile actions before anyone builds
+ * an army for a target the server will reject — never derived from anything else client-side.
+ */
 export interface MapSettlementView {
   id: string;
   x: number;
@@ -118,6 +124,7 @@ export interface MapSettlementView {
   ownerName: string;
   ownerFaction?: Faction;
   ownerSide?: Side;
+  protectedUntil?: number;
 }
 
 /** Mirrors `MapOasisView` in `apps/server/src/map/map.view.ts`. Terrain never appears here — the client derives it from `world.seed` via `terrainAt`. */
@@ -157,7 +164,12 @@ export interface MovementView {
   id: string;
   type: string;
   fromSettlementId: string;
-  toSettlementId: string;
+  // Exactly one of these two is ever present (M3c.7a: a movement now targets a settlement OR
+  // a farm oasis — `docs/M3_DESIGN_DECISIONS.md` §9/§10) — mirrors the server's own
+  // `MovementView.toSettlementId`/`.toOasisId` (`apps/server/src/movements/movements.view.ts`),
+  // which stopped always sending `toSettlementId` for exactly this reason.
+  toSettlementId?: string;
+  toOasisId?: string;
   target: { x: number; y: number };
   units: MovementUnitEntry[];
   survivors: MovementUnitEntry[];
@@ -174,6 +186,24 @@ export interface SendScoutsInput {
   fromSettlementId: string;
   target: { x: number; y: number };
   units: MovementUnitEntry[];
+}
+
+/**
+ * Mirrors `SendMovementDto` for the three player-initiated movement types M3e.3's attack form
+ * adds (§9): `raid`, `assault`, `support`. `scout` keeps its own narrower `SendScoutsInput`
+ * (M2c.2, unchanged) — `ScoutForm` never sends a `siegeTarget` and always sends exactly the
+ * caller's faction scout type, so widening that interface for this form's sake would only add
+ * an always-absent field to every existing scout call site. `siegeTarget` is only ever present
+ * when `type === 'assault'` and the army actually includes a siege unit (§7/§9) —
+ * `AttackForm` is the one caller and owns leaving it out otherwise, exactly as
+ * `MovementsService.sendMovement` itself only ever persists it in that same case.
+ */
+export interface SendMovementInput {
+  type: 'raid' | 'assault' | 'support';
+  fromSettlementId: string;
+  target: { x: number; y: number };
+  units: MovementUnitEntry[];
+  siegeTarget?: string;
 }
 
 /** Mirrors `ReportType` in `apps/server/src/schemas/report.schema.ts`. */

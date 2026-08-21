@@ -2,9 +2,11 @@ import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { ClientSession, Model, Types } from 'mongoose';
 
+import { NotificationsService } from '../../notifications/notifications.service';
 import { EventSchedulerService } from '../../scheduler/event-scheduler.service';
 import type { EventHandler } from '../../scheduler/event-handler.interface';
 import type { GameEventDocument } from '../../schemas/event.schema';
+import { NOTIFICATION_KIND_TRAINING_COMPLETE } from '../../schemas/notification.schema';
 import type { SettlementDocument } from '../../schemas/settlement.schema';
 import { Settlement } from '../../schemas/settlement.schema';
 import { toPlainTrainingQueueItem } from '../training-queue.util';
@@ -46,6 +48,7 @@ export class TrainingCompleteHandler implements EventHandler {
     @InjectModel(Settlement.name) private readonly settlementModel: Model<SettlementDocument>,
     @Inject(EventSchedulerService) private readonly eventScheduler: EventSchedulerService,
     @Inject(SettlementsService) private readonly settlementsService: SettlementsService,
+    @Inject(NotificationsService) private readonly notificationsService: NotificationsService,
   ) {}
 
   async handle(event: GameEventDocument, session: ClientSession): Promise<void> {
@@ -125,9 +128,25 @@ export class TrainingCompleteHandler implements EventHandler {
           eventId: nextEvent._id as Types.ObjectId,
         }),
       ];
+    } else {
+      // Order fully delivered — stays removed above. No cancel path exists to resurrect a
+      // finished order (orchestrator decision 2, `settlements.constants.ts`).
+      //
+      // §16's `trainingComplete` trigger fires HERE — on the order's final unit, not on each
+      // one of its (potentially dozens of) chained per-unit completions. A training order is
+      // one player-visible action ("train 20 Bikers"); notifying once per unit would be 20
+      // `trainingComplete` rows (and 20 WS pushes/log lines) for what the player experiences
+      // as a single order finishing — the exact over-notification `BuildCompleteHandler`
+      // never risks in the first place, since a build queue item and a level-up are already
+      // 1:1. `item.totalCount` (the order's original size), not `remainingCount` (always 0
+      // here) or a per-unit count, is the number worth reporting.
+      await this.notificationsService.enqueue(
+        doc.accountId,
+        NOTIFICATION_KIND_TRAINING_COMPLETE,
+        { settlementId: String(doc._id), unitType: item.unitType, totalCount: item.totalCount },
+        session,
+      );
     }
-    // else: order fully delivered — stays removed above. No cancel path exists to
-    // resurrect a finished order (orchestrator decision 2, `settlements.constants.ts`).
 
     // `returnDocument: 'after'` — unlike before M3a.6, the updated doc is now needed for the
     // `ensureStarvationSchedule` call below, not just for the null-check.

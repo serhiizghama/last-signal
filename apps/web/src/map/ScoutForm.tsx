@@ -24,6 +24,13 @@ interface ScoutFormProps {
   target: ApiTile;
   faction: Faction;
   troops: TroopCounts;
+  /**
+   * §11: while the target is still beginner-protected, scouting it is rejected the same as
+   * raid/assault/support — computed by the caller (`isBeginnerProtected` against the server
+   * clock, never `Date.now()`) since a plain settlement/oasis target has no notion of "am I
+   * protected" on its own.
+   */
+  isProtected: boolean;
   /** Called once the movement is created — the sheet closes on a successful send. */
   onSent: () => void;
 }
@@ -33,8 +40,9 @@ interface ScoutFormProps {
  * live travel-time preview computed client-side with the exact same `game-core` formula the
  * server uses (`chebyshevDistance` + `slowestTroopSpeed` + `travelTimeMs`, M1c's countdown
  * convention). Only ever rendered by `TileInfoSheet` for a tile that already resolved to
- * "another player's settlement" — `classifyTile` handles the oasis/own-settlement exclusions,
- * so the only thing left to gate here is scouts-at-home (`computeScoutEligibility`).
+ * "another player's settlement" or an oasis (§10 lifted the old M2 "oases aren't scoutable"
+ * rule) — `classifyTile` handles the own-settlement exclusion, so what's left to gate here is
+ * beginner protection and scouts-at-home (`computeScoutEligibility`).
  */
 export function ScoutForm({
   fromSettlementId,
@@ -42,14 +50,16 @@ export function ScoutForm({
   target,
   faction,
   troops,
+  isProtected,
   onSent,
 }: ScoutFormProps): ReactElement {
   const { t } = useTranslation('map');
   const { t: tCommon } = useTranslation();
   const { t: tUnits } = useTranslation('units');
+  const { t: tErrors } = useTranslation('errors');
   const queryClient = useQueryClient();
 
-  const eligibility = computeScoutEligibility(DEFAULT_CONFIG, faction, troops);
+  const eligibility = computeScoutEligibility(DEFAULT_CONFIG, faction, troops, isProtected);
   const [rawCount, setRawCount] = useState(1);
   const count = Math.min(Math.max(1, rawCount), Math.max(1, eligibility.availableCount));
 
@@ -97,7 +107,14 @@ export function ScoutForm({
         <button type="button" className="button button--primary" disabled>
           {t('scout.action')}
         </button>
-        <p className="tile-sheet__reason">{t('scout.noScoutsAtHome')}</p>
+        <p className="tile-sheet__reason">
+          {/* §11: the protected case reuses the server's own `errors.movement.targetProtected`
+              key verbatim — the wording players see here must never drift from what a rejected
+              send would show. */}
+          {eligibility.block?.kind === 'protected'
+            ? tErrors('movement.targetProtected')
+            : t('scout.noScoutsAtHome')}
+        </p>
       </div>
     );
   }

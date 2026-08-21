@@ -50,6 +50,9 @@ describe('World bootstrap + oases (integration)', () => {
     // `WorldService.onModuleInit` bootstraps the world as part of this call, against the
     // still-empty database above — exactly the "fresh dev/prod boot self-heals" path.
     await app.init();
+    // Explicit IPv4-bound single listener — avoids ephemeral-port collisions with other
+    // local processes; see `accounts.integration.spec.ts`'s beforeAll for why this matters.
+    await app.listen(0, '127.0.0.1');
 
     worldService = moduleRef.get(WorldService);
     worldModel = moduleRef.get(getModelToken(World.name));

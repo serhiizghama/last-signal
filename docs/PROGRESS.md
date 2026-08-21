@@ -138,6 +138,10 @@ subagent is not a dead one). Additional ones worth keeping:
   asserted the timer decreased and missed that nothing updated at zero.
 - **Derive test expectations from `game-core` at assertion time** — hardcoded cost
   constants in specs broke on every rebalance (M1a.7).
+- **An impossible HTTP status is evidence about the harness, not the app** (M3c.x). A 401 from a
+  route with no guard on it cannot come from application code. Dump the whole response — body and
+  headers — before calling anything "a flaky machine".
+
 
 ---
 
@@ -1412,3 +1416,796 @@ today (production halts at cap, NPC seeding fills to a ratio *of* cap, loot itse
 M3c.5b is the step that makes a cap *shrink*, so its brief carries the requirement: clamp
 stored resources to the new cap inside the destruction transaction (§7 demands it anyway) and
 floor `delivered` at zero so the two rules cannot ever disagree.
+
+### M3c.5b — the siege pass applied (CC floor, storage clamp, queue rule) ✅ (2026-08-18)
+
+§7 wired from `resolveSiegePass` into the arrival transaction. `BattleArrivalResolver` gained
+`computeSiegeOutcome` — pure, computed once before any write, so `writeReports` and
+`writeDefenderSettlement` read the same numbers instead of each re-deriving them. It returns
+`null` (a complete no-op) for a raid, for an assault with no persisted `siegeTarget`, and for a
+stored target that fails to narrow — the last one logged and skipped rather than failing the
+arrival, since one bad signal must not strand a battle that already resolved.
+
+The three §7 consequences are all applied by the caller, as `resolveSiegePass`'s purity boundary
+requires: **settle-then-change-levels** (the preamble already settled to `event.dueAt`, so the
+level change is correctly ordered after it), the **storage clamp** (`calcStorageCaps` over the
+*post*-destruction building list, applied to the *already loot-deducted* values, with the
+clamped-away amount carried into the `buildingDestroyed` report's `storageClamped`), and the
+**build-queue rule**, which needed no new code here — `BuildCompleteHandler` already sets
+`level = min(item.targetLevel, existing.level + 1)`.
+
+**The starvation interaction is the one thing the siege pass changes about the surrounding
+argument, and the code says so.** Battle losses can only ever *lower* net Food, so a pending
+starvation tick can become unnecessary but never missing — which is why neither settlement write
+touches `pendingStarvationEventId`. A destroyed Greenhouse breaks exactly that argument, so the
+defender write calls `ensureStarvationSchedule` whenever `siegeOutcome.levelsChanged`. §18's
+ascending-`_id` acquisition order is preserved either way: that extra write only ever touches the
+defender document, so it cannot reorder the two settlements' first touch.
+
+**Verification (orchestrator-run, from a `pnpm clean` tree).** Full gate green: **821 tests**
+(game-core 485, server **223** — the 11 new `M3c.5b: the siege pass applied` integration cases —
+web 113), `pnpm lint && pnpm typecheck && pnpm test && pnpm build` exit 0, no warnings in stdout.
+The 11 cases cover the wall-first breach matching `resolveSiegePass` exactly, building points
+reaching the named building only once the wall is at 0, every building point discarded while the
+wall stands, the **Command Center floored at 1** under overwhelming points, a defeated attacker
+getting no pass at all, loot-then-clamp ordering against a destroyed Warehouse, the assault-only
+gate, **replay safety** (the same arrive event twice knocks the levels once), and a building
+knocked to 0 being rebuildable through the real `POST` build API.
+
+**One item from M3c.5a's hand-off was NOT applied** and is carried into M3c.6: `MovementReturnHandler`
+still computes `delivered = credited − stored` without flooring at zero. The storage clamp that
+M3c.5a worried about *was* implemented (above), which is what keeps `stored > cap` unreachable —
+so this is defense in depth, not a live bug, and it is folded into the next step's brief rather
+than left as silent debt.
+
+**Note on provenance:** this step's code landed in commit `b297198` together with M3c.5a; only its
+PROGRESS entry was missing. The entry above is written against the committed tree, verified by the
+orchestrator in this session from a clean build — not transcribed from a subagent report.
+
+### M3c.6 — support arrival, the recall/evict pair, stationed scouts ✅ (2026-08-21)
+
+§8 wired end to end. `SupportArrivalResolver` (the third resolver in `MovementArriveHandler`'s
+registry, alongside scout and battle) merges a `support` movement's army into the host's
+`stationedTroops` under the `(ownerAccountId, fromSettlementId)` contingent key, subtracts it from
+the origin's `awayTroops` (§3's "`awayTroops` → `stationedTroops` on the host"), and ends the
+movement `done` — there is no return leg; the units stay until recalled or evicted. Two support
+movements from the same origin merge into **one** contingent, which is what
+`stationedContingentKey` and both the battle and starvation resolvers already assumed.
+
+**Recall and evict are one implementation with two doors** (`returnStationedContingent`). Both
+mint a **new** `Movement` in `returning` status rather than reopening the original — a contingent
+can be the merged result of several support movements, and `done` is terminal in the status
+machine. `recallSupport` ownership-checks the origin, `evictSupport` the host; the mechanics after
+that are identical.
+
+**The starvation asymmetry, which is the easy thing to get wrong here.** Support arrival raises the
+**host's** upkeep (it feeds the guests, owner decision 6) — a deficit no pending tick was scheduled
+against — so the host gets `ensureStarvationSchedule`. Recall raises the **origin's** (its units
+re-enter `awayTroops`, which per §24 B still *pay* upkeep even though they cannot die) — so the
+origin gets it. The mirror sides only ever *shed* upkeep, so a pending tick there can become
+unnecessary but never missing, and both are deliberately left alone. All four cases carry comments
+and two are asserted by tests.
+
+§8's other half: `ScoutArrivalResolver` now defends with `defenceTroopsOf` (home + stationed, never
+`awayTroops` — a unit in transit cannot watch the settlement it left), closing the obligation M3a.4
+recorded in a comment at that exact call site. The `scoutDetected` counter-report still goes to the
+settlement owner only; asserted.
+
+**Orchestrator-caught defect, fixed before sign-off — §18.3 acquisition order.** The delivery's
+`recallSupport` settled origin-then-host and `evictSupport` settled host-then-origin. Settling is a
+**write** (`settleDoc` runs a version-guarded `findOneAndUpdate` whenever time has elapsed), so the
+first *touch* of each document was happening in the settle phase — and these two commands are exact
+mirror images, so a concurrent recall and evict of the same contingent (the realistic case: §8
+deliberately gives each party one of them) was **guaranteed** to acquire the pair in opposite
+orders. The later `$set` block was correctly ordered; the ordering rule simply applied one phase
+earlier than the delivery assumed. Closed by `settleHostAndOrigin`, which settles both through the
+unchecked seam in ascending `_id` order before either role's ownership is resolved; each entry point
+then does its own ownership check and its own `ensureStarvationSchedule`, preserving
+`settleSettlementDoc`'s contract exactly. A concurrent recall-vs-evict race test now covers it.
+Recorded explicitly in the helper's comment: the arrival resolvers do **not** need the same
+treatment and must not be "consistency-fixed" — §18's single-process scheduler means handlers never
+run concurrently, which is the property that makes their preamble settle safe.
+
+**Two design readings applied, both recorded in code so nobody "fixes" them later:** a support
+arrival writes **no report** (§15 allocates eleven kinds and none is "support arrived"; §12 already
+makes inbound support fully visible), and recall/evict write none either (the movement is visible in
+the owner's `GET /api/movements/mine`).
+
+**One orchestrator technical decision:** `support` from a settlement to *itself* is rejected at send
+with `errors.movement.targetIsOrigin` — a zero-distance no-op that would make the arrival write one
+document twice under §18's two-document discipline. §8's "your own or anyone else's" means your
+*other* settlements, which stays allowed and is asserted by its own test.
+
+**Verification (orchestrator-run, twice, each from a `pnpm clean` tree).** Before the §18 fix:
+**834 tests**, exit 0. After: **835 tests** (game-core 485, server **237** — up from 223 — web 113),
+`pnpm lint && pnpm typecheck && pnpm test && pnpm build` exit 0, stdout read in full, no warnings
+anywhere. The 14 new server cases cover the arrival's numeric upkeep shift on both sides (derived
+from `game-core`, not hardcoded), same-origin merge vs different-origin separation, a
+support-delivered contingent defending a real battle and its owner getting `supportLoss`, stationed
+scouts detecting with zero home scouts, recall and evict round trips through the real
+`movementReturn` event, both authorization rejections, `contingentNotFound`, both starvation
+asymmetries, arrival replay safety, the recall-vs-recall playbook race, and the recall-vs-evict
+race the §18 fix required.
+
+**One naming wart accepted, not fixed:** `errors.movement.originGone` is thrown for whichever side of
+the pair is missing, so it reads oddly when it is the *host* that vanished. The RU string is already
+neutral ("Поселение на другом конце похода не найдено"), the case is unreachable in v1 (settlements
+are never deleted), and renaming would churn i18n plus tests for zero behavioural gain.
+
+### M3c.7a — oases become targetable; scouting one, end to end ✅ (2026-08-21)
+
+§10's plumbing plus its scouting half. `game-core` already had everything pure (`settleOasis`,
+`oasisTargetDefenders`, the `config.oasis` block — M3c.1) and the `Oasis`/`Movement` schemas already
+had the fields (M3c.2); none of it was wired to anything. Now it is.
+
+**`OasisService`** (new `apps/server/src/oasis/`) is the lazy settle seam, modelled on
+`SettlementsService.settleDoc`: `findByCoords` (deliberately does **not** settle — `sendMovement`
+only needs to know an oasis exists, so settling there would be a write with zero information
+gained) and `settleOasisDocUnchecked` (version-guarded settle-and-persist). Ownership-free by
+construction rather than by choice — an oasis has no owning account at all (§10), so unlike the
+settlement seam there is no ownership-checked sibling to pair it with.
+
+**The no-op skip gate is subtler than it looks and the code argues it properly.** A settled oasis
+carries two independent clocks, yet the skip checks only `lastRegenAt`. That is correct, not an
+approximation: `lastRegenAt` always advances all the way to `now` on any real settle, while
+`lastDefenderRegenAt` can never lag it by more than one whole `defenderIntervalMs` — so
+`now <= lastRegenAt` already proves no whole defender interval elapsed either. `lastRegenAt === null`
+(never touched since world generation) deliberately bypasses the gate entirely, so first contact
+still materialises the full target garrison instead of being swallowed by a stale-looking timestamp.
+
+**`MovementArriveHandler` now branches on target kind** and holds two registries — settlement and
+oasis — each with the same duplicate-registration guard. The `status !== 'outbound'` replay guard
+runs first, unconditionally, for both. A movement with *neither* id set throws loudly rather than
+guessing a target kind. The oasis side has its own temporary "no resolver yet" guard, and that guard
+is **load-bearing this step**, not a leftover: the same step's send-side widening makes an oasis
+raid reachable through the real API today, so without it an arriving oasis raid would resolve as a
+scouting mission — unrecoverable damage, versus a dead-lettered event that is merely recoverable.
+
+**`OasisScoutArrivalResolver`** is deliberately much thinner than the settlement one, and says why:
+no scout-vs-scout combat (wildlife has `scoutAttack`/`scoutDefense` 0 and there is nobody to fight),
+no detection, no counter-report, and **no intel tiers** (§10: "there is nothing deeper to gate"). One
+`scout` report to the sender carrying the settled defender composition and Food pool, plus a
+`targetKind: 'oasis'` discriminator so M3e's renderer can branch without sniffing which id fields
+exist. §15 allocates no new report type for oasis scouting, which is recorded in the resolver.
+
+**The §11 trap, closed structurally rather than by a skipped check.** Raiding an oasis must not lift
+a new player's beginner protection. The lift block now lives *inside* the `if (settlementTarget)`
+branch, so an oasis raid reaches the write path having never touched `protectedUntil` at all —
+rather than passing through a same-shaped guard that a later edit could quietly invert. Asserted by
+a test on the send-time effect (an oasis raid's *arrival* still dead-letters until M3c.7b).
+
+**Verification (orchestrator-run).** Full gate from a `pnpm clean` tree: **845 tests** (game-core
+485, server **247** — up from 237 — web 113), `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
+exit 0, stdout read in full, no warnings. Re-ran the whole suite a second time: identical, exit 0.
+
+**A flake was reported by the delivery, investigated, and ROOT-CAUSED (see the M3c.x entry
+below).** The delivery claimed a pre-existing M3c.3 test failed ~1 run in 4 from parallel-suite
+contention. That claim was unsupported — the previous three full-gate runs were clean — so I probed
+it. It reproduced in *different* tests each time, once as a `401` from `POST /api/auth/guest`, a
+route with no guard on it, which no game-logic change can produce. Instrumenting the helper caught
+the real response and settled it completely: the request was reaching a **foreign Express server**
+on a recycled ephemeral port. Full diagnosis and fix in the M3c.x entry. Not a defect in this step,
+and no longer an unexplained one either.
+
+**Carried to M3d:** target resolution currently rejects a tile holding neither settlement nor oasis
+with `errors.movement.targetNotSettlement`. A `settle` convoy targets exactly such an empty tile, so
+M3d adds a third branch there, and the schema's "exactly one of `toSettlementId`/`toOasisId`"
+invariant becomes "at most one".
+
+### M3c.x — the integration-suite flake, root-caused and fixed (test infrastructure) ✅ (2026-08-21)
+
+Not a milestone step — an orchestrator-initiated fix, taken before continuing M3, because a suite
+that fails ~1 run in 7 for no reason makes every "the gate is green" claim after it worthless.
+
+**Symptom.** The server integration suite intermittently failed with `expected 401 to be 201` (also
+seen: 403, 404) inside `createGuestSession`, which calls `POST /api/auth/guest` — a route with **no
+guard on it**, where those statuses are structurally impossible. The victim test was different every
+run, spanned already-committed milestones (M3c.3, M3c.5b) as well as new ones, and it never
+reproduced in isolation (103/103 alone; 6/6 consecutive spec runs; 300/300 on a throwaway
+guest-login-only probe).
+
+**Root cause, captured rather than inferred.** Temporary instrumentation on the helper dumped the
+real response:
+
+```
+status: 403
+body:    {"error":"Invalid value for header \"authorization\""}
+headers: { "x-powered-by": "Express", "content-type": "application/json; charset=utf-8", ... }
+requestUrl: "http://127.0.0.1:49915/api/auth/guest"
+```
+
+That error string exists nowhere in this codebase. The request reached a **foreign Express server**
+that had bound 127.0.0.1:49915 — another process on the machine entirely.
+
+The mechanism is `supertest(app.getHttpServer())`: with the server not already listening, supertest
+calls `server.listen(0)` per request and closes it afterwards, so all 13 integration spec files
+churn ephemeral ports continuously in parallel worker processes. Node's `listen(0)` with no host
+binds `::` (dual-stack) while supertest addresses the URL as `127.0.0.1` — so another process
+holding an **IPv4-only** bind on the same port can coexist with ours and win for that traffic.
+Random victim, impossible status, clean in isolation: all three symptoms fall straight out of it.
+
+**Fix.** The pattern `realtime.integration.spec.ts` already used: one stable listener per spec file,
+`await app.listen(0, '127.0.0.1')` once in `beforeAll`, so supertest reuses it instead of opening
+its own. The explicit host is load-bearing, not cosmetic — it is the exact interface supertest
+addresses, so a foreign IPv4 bind can no longer shadow it — and the single listener removes the
+open/close churn that opens the collision window at all. Test files only; no production code, no
+assertion, no fixture, no test name changed, and `vitest.config.mts` untouched (parallelism stays
+on — the suite stays fast *and* correct).
+
+**Standing lesson (added to the list at the top of this file).** *An impossible HTTP status is
+evidence about the harness, not the app.* Two separate deliveries wrote this off as "resource
+contention" without explaining how an unguarded route could answer 401. The mechanism was
+recoverable in about twenty minutes by dumping the response instead of the status — never accept
+"flaky, probably the machine" for a result the code cannot produce.
+
+### M3c.7b — raiding and assaulting an oasis ✅ (2026-08-21)
+
+§10's combat half, completing M3c.7a's plumbing. `OasisBattleArrivalResolver` claims `raid`/`assault`
+in the oasis registry: `resolveBattle` against the settled wildlife garrison as a single contingent,
+`wallLevel: 0`, the same deterministic `battleRoll(world.seed, movementId)` the settlement side uses,
+attacker losses off the origin's `awayTroops`, defenders and pool written back version-guarded, one
+`oasisRaid` report to the attacker, and the ordinary return leg.
+
+**Three things §10 removes, and the code says so rather than just omitting them.** No siege pass ever
+— not even for an assault carrying siege units and a stored `siegeTarget`; the send command still
+validates and persists it (that is a rule about the movement *type*, not the target — M3c.7a's
+recorded reading), and this resolver simply never reads it, while siege units still fight and still
+carry loot. No stationed contingents (support cannot reach an oasis at all). No owner, therefore no
+`defense` counter-report and no `supportLoss` — `kind` in the payload distinguishes raid from
+assault, which is why §15 allocates one report type for both.
+
+**Loot is Food-only by honest composition, not a bespoke formula.** `resolveLoot` is fed a
+`LootTarget` whose scrap/fuel/electronics are 0 and whose `hiddenCacheLevel` is 0, which yields
+exactly §10's "Food only, capped by surviving carry capacity and by the pool", and still enforces §6's
+"an unsuccessful attacker loots nothing" through `attackerPrevailed`. The same object is reused to
+compute the remaining pool via `subtractResources`, so there is no second hand-rolled subtraction to
+drift from the first.
+
+**A defender wipe is not special-cased.** §10's "assault simply wipes the defenders (they respawn)"
+is just `defenders: []`, which `settleOasis` already regrows toward `oasisTargetDefenders` from any
+starting count. Proven by a test that asserts the *respawn*, not merely the wipe.
+
+**The flagged trap was real and is closed.** `MovementReturnHandler` looked its loot report up by
+`type: {$in: [raid, assault]}` and **throws** when it finds none — an oasis raid sets `movement.loot`
+but writes `oasisRaid`, so every loot-carrying oasis raid would have dead-lettered on the way home
+and the army would never have landed. Lookup widened to include `oasisRaid`, the throw's comment now
+names all three types that may accompany loot, and a test covers the round trip end to end.
+
+**§18 ordering, argued rather than copied.** This arrival writes one `Oasis` and one `Settlement` —
+different collections, and no other command in the codebase writes that pair — so unlike
+`BattleArrivalResolver`'s settlement-vs-settlement case there is no second writer whose order this
+could disagree with, and a fixed documented order (target, then attacker) is sufficient. The
+reasoning is in the code so the absence of a runtime `_id` comparison does not read as an oversight.
+
+**Verification (orchestrator-run, from a `pnpm clean` tree).** **854 tests** (game-core 485, server
+**256** — 247 − 1 obsolete + 10 new — web 113), `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
+exit 0, stdout read in full. The obsolete test removed was M3c.7a's own oasis-raid dead-letter guard,
+which asserted precisely the failure this step fixes. Server suite then run **8 more times
+consecutively, all 256/256** (on top of the flake fix's own 12 — 20 consecutive clean runs).
+
+**One delivery claim did not hold up:** prettier was reported clean and was not —
+`accounts.integration.spec.ts` and `health.integration.spec.ts` both failed `--check`. Fixed here
+(formatting only) and re-verified clean across all source globs.
+
+### M3c.8 — `GET /api/movements/incoming` and the map's protection flag ✅ (2026-08-21)
+
+§12's endpoint and §11's map marker — the last step of M3c.
+
+**The tiers are enforced by omission, which is the whole security property.** `listIncoming`
+resolves each movement's tier from *its own target settlement's* Radio Tower level
+(`incomingDetailTier`, `game-core`), and `toIncomingMovementView` simply never sets a field the tier
+does not allow — a `kind`-tier entry has no `units` key at all. There is no "send everything, let the
+client redact" path anywhere in it. Asserted on the **serialized JSON** at each of the three tiers,
+the same guard `map.integration.spec.ts` already applies to `GET /api/map`; a clean typed view is not
+the same as a clean payload.
+
+Selection follows §12 exactly: only `outbound` movements aimed at the caller's own settlements;
+**scouts never appear** at any tier or tower level (M2 §8's "a scout you can see coming is not a
+scout"); `support` is always fully visible regardless of tower level, implemented by forcing its tier
+to `full` so it falls through the *same* inclusion switch a full-tier raid does rather than a
+parallel branch that could drift. Origin settlements and their owners are resolved as two batched
+queries joined in memory, following `MapService.getMapView`'s established pattern rather than an N+1.
+
+**A delivery judgment call I reviewed and accepted:** `protectedUntil` appears on the map only while
+protection is *actually in effect*, not whenever the field is set. `Account.protectedUntil` is
+stamped once and never cleared, so forwarding it unconditionally would give every human account a
+field NPCs (never stamped, §19.2) permanently lack — a forever NPC tell, contradicting
+`MapSettlementView`'s own "an NPC must be indistinguishable from a human one" invariant far beyond
+what §11 asks for. Gating on `isBeginnerProtected` honours §11 literally ("so nobody wastes a march")
+and lets an account become indistinguishable again the moment its 72 h lapses. The raw timestamp
+still ships, not a precomputed boolean, per §19.8.
+
+**A design consequence worth the owner's attention (not a defect, and unavoidable):** while a human's
+72 h protection holds, their map entry carries one key an NPC's never does. §11 requires the marker
+and §19.2 forbids protecting NPCs, so *any* correct implementation makes a protected settlement
+identifiable as a recently-joined human. It is temporary and self-clearing. The pre-existing
+"NPC indistinguishable from human" test was extended to exclude exactly this key, with the reasoning
+recorded, and the omission is covered by its own dedicated test — every other field must still match
+exactly. The same edit **strengthened** the leak guard with five more `Account` fields (`tgId`,
+`contribution`, `medals`, `settings`, `sideChangedAt`), which is what actually proves §19.8's "only
+`protectedUntil` is added".
+
+**One small pre-existing debt closed in passing:** `MovementView` now exposes `siegeTarget`, so a
+player can read back what their own assault was ordered against — recorded as debt in M3c.3. It is
+deliberately *not* the same field as `IncomingMovementView.siegeTarget`: the sender's own order is
+always visible to them, the defender's copy stays tier-gated.
+
+**Out of scope by orchestrator decision, recorded at the send site:** §12 also calls for an
+`incomingAttack` WS event and a notification at send time. Both belong to M3e, which builds the
+notification outbox, provider interface and in-app/WS delivery as one piece (§16); shipping half here
+would leave either a WS emit with nothing behind it or a second competing delivery path.
+
+**Verification (orchestrator-run, from a `pnpm clean` tree).** **862 tests** (game-core 485, server
+**264** — up from 256 — web 113), `pnpm lint && pnpm typecheck && pnpm test && pnpm build` exit 0,
+stdout read in full. Prettier clean across all source globs (verified by me, not just reported).
+Server suite run 3 more times: 264/264 each.
+
+---
+
+## ✅ M3c — Attack, support & oases (server): COMPLETE (uncommitted, ready for owner review)
+
+M3c.1–M3c.8 all delivered and verified. §20's five M3c acceptance criteria, checked against the code
+as it actually stands:
+
+| §20 acceptance criterion | Status |
+|---|---|
+| A raids B; both reports match hand-computed numbers | ✅ M3c.4 |
+| Loot lands home on return, clamped by storage | ✅ M3c.5a |
+| Assault siege takes a wall level then a building level, CC never below 1 | ✅ M3c.5b |
+| Support arrives, is fed by the host, defends, can be evicted | ✅ M3c.6 |
+| An oasis raid returns Food and the pool regenerates | ✅ M3c.7b |
+| An attack on a protected account is rejected; protection lifts after that account's own first raid | ✅ M3c.3 |
+| Every new handler is a no-op on replay | ✅ replay tests in M3c.4/5a/5b/6/7b |
+| The playbook race passes for each new command | ✅ M3c.3 (send), M3c.6 (recall, recall-vs-evict) |
+
+Gate at the end of M3c: **862 tests** (game-core 485, server 264, web 113), lint / typecheck / test /
+build clean from a `pnpm clean` tree, prettier clean, no warnings.
+
+**Two orchestrator-caught defects during M3c, neither reported by its delivery:** the §18.3
+acquisition-order violation in recall/evict (M3c.6), and the integration suite's ephemeral-port flake
+(M3c.x) — the latter root-caused to requests reaching a foreign Express server on a recycled port,
+which had been dismissed twice as "resource contention".
+
+**Next: M3d — Founding & the Market.**
+
+## Owner decisions during M3d (2026-08-21)
+
+Two §14 ambiguities put to the owner before the Market was briefed. Both are binding for M3d.
+
+| # | Question | Decision |
+|---|---|---|
+| E | Does an offer merely *sitting on the board* tie up the offerer's merchants? | **No — merchants are occupied only on acceptance.** An open offer costs nothing but its already-deducted resources. Accepted cost: several of your offers accepted at once with too few free merchants means the extra accepts fail. This is also the natural reading of §14's "each occupying merchants at both ends" (= both parties, at acceptance), and §14 never says an open offer costs anything |
+| F | §14 sets a 48 h TTL but never says what expiry does to the deducted resources | **Refund 100 %, exactly like a cancellation** — clamped to the settlement's storage caps, overflow lost (the same rule loot already follows). Silently destroying resources on a timer is stated nowhere in §14 |
+
+## Log — M3d (implementation)
+
+### M3d.1 — the settler convoy and Influence-gated founding ✅ (2026-08-21)
+
+§13 end to end. Settlers were already trainable at the Command Center (M3a.5) and Influence already
+existed (M1 §7); what was missing was the movement that carries them to a tile and founds there.
+
+**A third target kind.** `sendMovement` resolved a target as "settlement, else oasis, else reject";
+`settle` targets a tile that is **neither**, so it gets its own branch — the tile must hold no
+settlement and no oasis and must pass `isSettleable`, and the movement is created with neither
+`toSettlementId` nor `toOasisId`. The schema's documented invariant is now **"at most one of the two
+is set; a `settle` movement sets neither, because its target is a bare tile that is not a document
+yet"**. `MovementArriveHandler` gained a third dispatch branch ahead of its "corrupt document" throw,
+and a `TileArrivalResolver` interface (no target document to pass in) sits alongside the settlement
+and oasis ones.
+
+**Legality is reused, not restated.** `PlacementService` gained `isTileSettleable` for a
+caller-chosen tile, sharing one private legality helper with `findTile`, so the random-placement path
+and the player-chosen path can never disagree about what a legal tile is.
+
+**One shared definition of "a new settlement".** Rather than a second copy of the creation shape,
+`SettlementsService` now exposes `createSettlementDoc` (Command Center L1, starting resources,
+nothing else — M1 §4), called by both `createSettlement` and `SettleArrivalResolver`. It deliberately
+owns *none* of Influence, `protectedUntil`, or the unique-index collision, and the code says why for
+each: those three are the callers' concerns and are handled differently by each.
+
+**`protectedUntil` is not re-stamped, and the guarantee is structural.** §11 stamps it on an
+account's *first* settlement only. The stamp lives in `createSettlement`, not in the shared helper,
+and `SettleArrivalResolver` never calls it — it cannot legitimately be founding a first settlement
+anyway, since training a Settler requires an existing Command Center. Asserted by its own test.
+
+**The gate really is checked twice (§13).** Arrival re-checks tile-free, `isSettleable`, and
+Influence. That third re-check is no longer theoretical: M3c.5b's siege pass can knock out a building
+and drop the sender's Influence below the threshold while the convoy is in flight, and there is a
+test that drives exactly that by lowering real buildings rather than mocking. Every failure path
+returns the convoy home **with all 3 Settlers alive** plus a `settle` report naming a stable `reason`
+— §13 is explicit that consuming them on a failed founding is rejected ("2100 resources destroyed by
+a race condition is not a game mechanic").
+
+**§18 reasoned about rather than cargo-culted.** The success path writes a brand-new settlement and
+the origin. The ascending-`_id` rule does not apply to the new document: nothing else in the system
+can reference an id this `create()` just generated, so no concurrent command could acquire it in the
+opposite order. That leaves exactly one contendable document, and "acquire in ascending order" has
+nothing to order against. The reasoning is in the code so its absence does not read as an oversight.
+
+**Recorded so nobody thinks it is load-bearing:** the duplicate-key catch around
+`createSettlementDoc` is genuinely defensive. §18's single-process scheduler serializes arrivals, so
+the second convoy's own tile-free re-check sees the first one's committed settlement and turns around
+before `create()` is ever reached. The catch exists because §13 names the unique index as the final
+authority, not because it is reachable today.
+
+**Verification (orchestrator-run, from a `pnpm clean` tree).** **874 tests** (game-core **486**,
+server **275** — up from 264 — web 113), `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
+exit 0, stdout read in full. Prettier clean across all source globs. Server suite run 3 more times:
+275/275 each.
+
+**Process note:** this delivery went idle without sending a completion report. Rather than assume
+either success or failure, I inspected the tree, confirmed all six deliverables and all eleven
+required tests were present, and ran the full gate myself — which is the verification that counts
+regardless. Everything above is from my own run, not a transcribed report.
+
+**Two pre-existing tests changed, legitimately.** Both asserted that `settle` is an unknown/unsendable
+movement type — the exact invariant this step reverses, so they were false statements the moment it
+landed. They were repointed at `trade` (still genuinely unsendable until M3d.3) rather than deleted,
+keeping the coverage that an unrecognised type is rejected. Flagged by the delivery rather than
+slipped through, and verified by me in the diff. The interface file is named `TileArrivalResolver`
+(not `SettleArrivalResolver`) to avoid colliding with the resolver class itself.
+
+### M3d.2 — merchants, `tradeOffers`, and the offer lifecycle ✅ (2026-08-21)
+
+§14's first half: the offer board. Posting, listing, cancelling and expiring an offer all work;
+acceptance and `trade` movements are deliberately M3d.3, so this step creates no movement anywhere.
+
+**The formulas live in `game-core`, as they must:** `merchantsFromMarketLevel`, `merchantCapacity`,
+`merchantSpeed`, `merchantsNeededFor` (`market/merchants.ts`), plus `weightedResourceValue` and
+`isOfferRatioLegal` (`market/offers.ts`). The server computes none of them itself. The whole §14
+config landed in one edit — `market` and `merchant` blocks including `exchangeSpread`/`exchangeTripMs`,
+which have no reader until M3d.4 and are commented as such. `configVersion` stayed 7, consistent with
+M3a.1/M3c.1/M3d.1.
+
+**The ratio cap's boundary is argued, not guessed.** `isOfferRatioLegal` is inclusive at both ends
+because §14 states the rule with `<=` verbatim, and the code explicitly contrasts this with
+`isBeginnerProtected`'s *exclusive* endpoint — a duration's final instant and a cap's exact limit are
+different kinds of boundary, and the convention does not transfer. Zero amounts are rejected before
+the ratio is computed rather than allowed to produce `0`/`Infinity`/`NaN`.
+
+**Owner decisions E and F are implemented and cited at their call sites.** No merchants are reserved
+by an open offer (E) — `Settlement.busyMerchants` was added now, defaulted to 0, with a schema comment
+naming M3d.3 as its first writer, mirroring how `awayTroops`/`stationedTroops` landed a step ahead of
+theirs. Expiry refunds 100% exactly like cancellation (F), through one shared `computeOfferRefund` so
+the HTTP path and the scheduler path can never clamp differently — credit-then-clamp with the overflow
+lost, the same rule loot already follows.
+
+**A real bug the delivery found and fixed before shipping, worth recording because the codebase warns
+about exactly it.** `computeOfferRefund` first built its result as `{ ...currentValues, [resource]:
+credited }`. `currentValues` is a live Mongoose subdocument whose resource fields are prototype
+getters, not own enumerable properties — so the spread captured Mongoose internals (`_doc`, `$__`,
+`$isNew`) instead of the data, and the resulting `$set` was a **no-op on the real fields**. The HTTP
+response still showed a correct refund (computed from the right inputs), so only a persistence
+assertion could catch it; the delivery's own integration tests did. Now built field-by-field over
+`RESOURCE_KINDS`, matching `MovementReturnHandler`'s existing explicit credit loop. This is the third
+time this hazard has bitten in this codebase (`toPlainQueueItem`'s comment records the first).
+
+**Reading recorded:** an offer's own lifecycle writes **no report** — §15 fixes eleven report kinds
+and allocates none for cancel/expire; the offer's terminal `status` is what M3e's Market tab renders.
+Same shape of recorded reading as M3c.6's "a support arrival writes no report".
+
+**§18 argued rather than cargo-culted, again:** cancel writes two documents (settlement + offer) with
+no ascending-`_id` ordering, because both of the only two writers of that pair (`cancelOffer` and
+`TradeOfferExpireHandler`) acquire them settlement-then-offer — there is no code path that could take
+them in the opposite order, so the rule has nothing to protect against. Documented in the code.
+
+**Verification (orchestrator-run, from a `pnpm clean` tree).** **922 tests** (game-core **510** — up
+from 486 — server **299** — up from 275 — web 113), `pnpm lint && pnpm typecheck && pnpm test &&
+pnpm build` exit 0, stdout read in full. Prettier clean across all source globs. Server suite run 3
+more times: 299/299 each. The new `market.integration.spec.ts` correctly adopts the
+`app.listen(0, '127.0.0.1')` pattern, so it does not reintroduce the M3c.x ephemeral-port hazard.
+
+### M3d.3 — accepting an offer, and the two `trade` movements ✅ (2026-08-21)
+
+§14's second half. `POST /api/market/offers/:id/accept` deducts only the accepter's `want` (the
+offerer's `give` was already deducted at creation — not deducting it twice is the whole point of
+deduct-at-creation and was the single most likely bug here), occupies merchants at **both** ends
+(owner decision E's moment), spawns two `trade` movements in opposite directions, flips the offer to
+`accepted`, and **deletes its pending expire event** — without that last step an accepted offer would
+later expire and refund resources already in transit, a real double-spend, and it has its own test
+that advances the scheduler past the original `expiresAt`.
+
+**`Movement` learned to carry goods:** `cargo` (a `ResourceAmounts`, same convention as `loot`),
+`merchants` (captured at send so the return frees exactly what was taken even if config is retuned
+mid-round — the reasoning `TrainingQueueItem.unitTrainTimeMs` already records), and `tradeOfferId`.
+`units` stays `[]`, and the code notes that `slowestTroopSpeed` throws on an empty list, so a trade
+leg must never reach it — travel time comes from `merchantSpeed(config, faction)` instead. **Each leg
+travels at its own sender's faction speed**, so the two halves of one trade legitimately arrive at
+different times; that is a real consequence of §14's faction table, asserted by a test comparing two
+`arriveAt`s computed from `game-core`.
+
+**§15's "both parties get one report" was genuinely non-trivial and is solved properly.** The two
+facts a `trade` report carries — "resources delivered" (known when one leg *arrives*) and "merchants
+freed" (known when the *other* leg later *returns*) — live on two different `Movement` documents, and
+faction-flavoured speeds mean neither event reliably comes first. Both writers therefore upsert **one
+report per party**, correlated by `tradeOfferId`, with `$setOnInsert` reserving each writer's own
+fields so neither clobbers the other. Asserted at exactly two reports per accepted offer — never
+zero, never four.
+
+**Two delivery choices, both made correct rather than half-right:**
+- **Cancelling a trade leg is fully supported.** `cancelMovement` needed no changes — it is generic —
+  and correctness lives in `cargo` staying set: only a *successful* delivery clears it, so a
+  cancelled (or missing-target) leg carries its goods home on the ordinary return, clamped, and frees
+  its merchants there. A half-supported cancel that stranded merchants or resources would have been
+  worse than rejecting cancel outright.
+- **A missing destination returns the cargo home** rather than destroying it, mechanically identical
+  to the cancel path.
+
+**Orchestrator follow-ups sent (delivery flagged the first itself rather than burying it):**
+1. `acceptOffer`'s *settle* phase settles accepter-then-offerer instead of ascending `_id`. The
+   delivery correctly judged this a `TransientTransactionError` (retried by `withTransaction`) rather
+   than a correctness bug, and offered to fix it. Requested — M3c.6 was ruled the same way, §18.3
+   names the *first touch* of each document with no "the retry sorts it out" exception, and the
+   scenario is real (two offers between the same pair with reversed roles, accepted concurrently).
+2. The `upsert` comments explain why the two writers' *order* is unknowable but not why they can
+   never be *simultaneous* — which is what actually makes the upsert safe. There is no unique index
+   on `(accountId, type, payload.tradeOfferId)`, so genuinely concurrent upserts would create **two**
+   report documents; the single-process scheduler is what prevents it, and §18 already flags that as
+   a load-bearing property. Requested as another named dependent of it.
+
+**Verification (orchestrator-run, from a `pnpm clean` tree).** **933 tests** (game-core 510, server
+**310** — up from 299 — web 113), `pnpm lint && pnpm typecheck && pnpm test && pnpm build` exit 0.
+Re-verification after the two follow-ups is recorded below.
+
+**One incidental test-fixture fix:** `seedMarketSettlement` walked a single diagonal (61 slots on the
+61×61 grid) and ran out of room; it now wraps across the full grid (~3721 slots). No test hardcodes a
+coordinate, so nothing else moved.
+
+**Both follow-ups closed and re-verified (2026-08-21).** `acceptOffer` now settles both settlements
+ownership-free in ascending `_id` order before either role is resolved, with the accepter's ownership
+check deferred to immediately after — the same `SettlementNotFoundError` for an unknown and a foreign
+id, unchanged. The delivery also spotted and restored something the request only implied: switching
+to the unchecked seam dropped the `ensureStarvationSchedule` that `settleSettlementDoc` had been
+providing for free, so it is now called explicitly on the ownership-confirmed accepter, exactly as
+`recallSupport` does after its own `settleHostAndOrigin`. The offerer's missing-settlement rejection
+was deliberately left as its own defensive `Error` rather than borrowed from `settleHostAndOrigin`'s
+player-facing key — a different scenario with a different error contract.
+
+Both upsert call sites now record that the scheduler's single-process, one-event-at-a-time dispatch
+is what rules out a *simultaneous* double-insert (there is no unique index on
+`(accountId, type, payload.tradeOfferId)`), naming it as another dependent of §18's load-bearing
+serialization property. Comment chosen over a unique partial index — the smaller change.
+
+Re-verified from a `pnpm clean` tree: **933 tests unchanged** (game-core 510, server 310, web 113),
+gate exit 0, prettier clean (checked by me directly), server suite 310/310 on three further runs.
+
+### M3d.4 — the world exchange post ✅ (2026-08-21)
+
+§14's faceless counterparty, and the last server step of M3.
+
+**`exchangeOutput` (game-core)** returns `amount * (valueWeights[from] / valueWeights[to]) *
+(1 - exchangeSpread)`, reading the two config values M3d.2 landed a step ahead of their first reader.
+Its doc comment carries the argument §14 actually leans on: what comes out is algebraically
+`amount * valueWeights[from] * (1 - exchangeSpread)` in weighted terms — **strictly less than what
+went in, for any pair of resources** — so no sequence of conversions can manufacture value, and a
+round trip loses the spread twice. That is *why* §14 says the exchange needs no daily cap, no
+cooldown and no anti-abuse state: unlike a player-to-player offer (where two willing players could
+collude on any ratio, hence `isOfferRatioLegal`), the exchange has no counterparty to collude with.
+No rounding — the M1 float convention, floored only for display. `amount <= 0` returns 0, which is
+what makes "never negative" a property of the function rather than of its validated callers.
+
+**Not a movement, deliberately.** §14: "nothing travels on the map because there is no counterparty
+to travel to." The exchange is a settlement-local operation with a scheduled completion, structurally
+closer to `tradeOfferExpire` than to a `trade` leg — deduct-at-start, occupy merchants, credit on
+completion, free merchants.
+
+**Storage choice, argued rather than assumed:** a new `marketExchanges` collection with a
+`pending → completed` status, not an event-payload flag. Two reasons, both recorded in the schema:
+idempotency in this codebase is always "re-read the document, is it still pre-terminal?"
+(`Movement.status`, `TradeOffer.status`) and an immutable event payload has nowhere to record
+"already applied"; and M3e's Market tab needs to query an in-progress exchange for its countdown,
+which scheduler-internal event machinery cannot serve. `output` and `merchantsOccupied` are captured
+at creation for the same config-retune safety `Movement.merchants` already applies.
+
+**A naming judgment worth keeping:** for crediting the output the delivery chose
+`creditResourcesClamped` (`movements.util.ts`) over `computeOfferRefund` (`market.util.ts`) even
+though the clamp arithmetic is identical — because the latter is named and documented around
+*refunding* an offer's previously-deducted stake (owner decisions E/F), and exchange output is
+freshly-manufactured value, not a refund. Correct instinct: reusing a function whose name lies about
+the operation is a slower kind of bug than duplicating four lines would have been.
+
+**`SettlementStateView` gained `merchantsTotal`/`merchantsBusy`** — the former through
+`merchantsFromMarketLevel`, honouring that view's "nothing is computed by hand" rule. Available
+merchants are deliberately *not* precomputed into a third field.
+
+**No report** — §15 allocates none for an exchange (it is not a trade with a counterparty), recorded
+in a comment, the same shape of reading M3c.6 and M3d.2 already made. **No new i18n keys** — every
+rejection reuses an existing `errors.market.*` key.
+
+**Verification (orchestrator-run, from a `pnpm clean` tree).** **958 tests** (game-core **519** — up
+from 510 — server **326** — up from 310 — web 113), `pnpm lint && pnpm typecheck && pnpm test &&
+pnpm build` exit 0, stdout read in full. Prettier clean (run by me directly). Server suite 326/326 on
+three further runs. The integration tests drive the §20 criterion end to end through the real
+scheduler, plus all ten rejection paths, the storage clamp, replay safety, the two-concurrent-exchange
+race, and a live A→B→A round trip proving the player ends strictly poorer.
+
+---
+
+## ✅ M3d — Founding & the Market: COMPLETE (uncommitted, ready for owner review)
+
+M3d.1–M3d.4 delivered and verified. §20's M3d acceptance criteria:
+
+| §20 acceptance criterion | Status |
+|---|---|
+| Train 3 Settlers → send `settle` to a legal tile → second settlement exists with a Command Center L1 and appears in `GET /api/settlements/mine` | ✅ M3d.1 |
+| The same convoy sent at an illegal tile comes home with its Settlers alive and a report | ✅ M3d.1 |
+| An offer outside the 1:2 ratio is rejected | ✅ M3d.2 |
+| An accepted offer moves resources in both directions and frees the merchants | ✅ M3d.3 |
+| The exchange converts at exactly the configured spread | ✅ M3d.4 |
+
+Gate at the end of M3d: **958 tests** (game-core 519, server 326, web 113), lint / typecheck / test /
+build clean from a `pnpm clean` tree, prettier clean, no warnings.
+
+**M3's entire server surface is now complete.** All eleven §15 report kinds exist, all six movement
+types send and resolve, and every §20 server acceptance criterion across M3a–M3d is met.
+
+**Next: M3e — UI, reports & notifications.** Decomposed into six steps: M3e.1 the notification outbox
++ provider interface + in-app/WS provider + Telegram stub + the deferred `incomingAttack` event + the
+change-stream resume fix (server-only, §16/§19.9); M3e.2 the Units tab; M3e.3 the attack flow and
+protection badges; M3e.4 the incoming panel; M3e.5 the report bodies for all eight new kinds; M3e.6
+the Market tab and settle flow.
+
+## Log — M3e (implementation)
+
+### M3e.1 — the notification layer and the change-stream resume fix ✅ (2026-08-21)
+
+§16 and §19.9. Server-only; every screen is M3e.2–M3e.6. This step exists so those steps have a real
+delivery path to render against.
+
+**The outbox** (`notifications`) is written **in the same transaction** as the effect that caused it —
+so a notification can never exist for an effect that rolled back, nor be lost for one that committed;
+proven by a test that forces a rollback and asserts no row. Six kinds per §16, as a widenable union
+with exported constants. Per-kind toggles read from `account.settings` **at enqueue time, not at
+delivery time**, with the reasoning recorded: checking at delivery would let a disabled kind
+accumulate permanently-undeliverable rows, which the outbox's small-and-ever-shrinking partial index
+assumes never happens.
+
+**Two providers** behind a `NotificationProvider` interface modelled on the existing `AuthProvider`:
+an in-app/WS provider over `RealtimeGateway.emitToAccount`, and a Telegram **stub** that logs the
+exact payload it would send — the same treatment TG auth already has (M1 §13), real bot at M7.
+
+**The dispatcher is a self-rescheduling `GameEvent`**, the pattern `StarvationTickHandler` already
+uses — no new infrastructure. Rejected alternatives are recorded: a hook inside `SchedulerService`
+would make `scheduler/` depend on `notifications/`, and a change stream on the outbox has no "retry
+this row later" primitive, so it would need a polling backstop anyway. Delivery is at-least-once and
+idempotent per row (`deliveredAt` guards both the drain query and the stamp), a throwing provider is
+isolated per row, and a full batch reschedules at the same `dueAt` so a backlog drains across
+consecutive claims instead of trickling.
+
+**The `incomingAttack` trigger honours §12's tiers through the same code path as the endpoint.** It
+reuses `incomingDetailTier` and `toIncomingMovementView`, so a level-0 defender's notification carries
+no unit composition — asserted on the serialized payload with the same leak-guard convention M3c.8
+established. A **scout** send cannot produce a notification at all: the enqueue is gated on
+`raid`/`assault` structurally, not by a suppressible check. Support produces none — it is not an
+attack, and §16 names no kind for it. This was the trap in this step: a notification is exactly the
+kind of side channel that would have routed around the tier system M3c.8 built.
+
+**`battleReportArrived` is enqueued through one `enqueueForReports` hook** that both battle resolvers
+call after writing reports, rather than at each of the six combat-report call sites.
+**`trainingComplete`** fires only on an order's last unit — a 20-unit order is one finished order to
+the player. **`settlementFounded`** fires only on a successful founding; a failed convoy still gets its
+§15 report but no notification.
+
+**The resume fix (§16/§19.9), and an orchestrator correction.** The publisher previously reopened
+*fresh* and carried a long, deliberate rationale against resume tokens. §16 overrides that because
+push became load-bearing, so the token is now persisted, resumed from, and cleared on
+`ChangeStreamHistoryLost` with the existing fresh-reopen fallback behind it — the doubled failure
+modes are now accepted rather than avoided, and the old rationale paragraph was rewritten to record
+what changed instead of arguing against the code beneath it.
+
+The first delivery persisted the token but **never read it back** — resume worked only for in-process
+reconnects, leaving a durable collection that looked load-bearing and wasn't. The stated reason was
+that a boot read would break existing fake-timer assertions, which is a test-shape reason, not a
+design one; letting a spec's timer style dictate production behaviour is backwards. Sent back: read
+it at boot, or delete the collection and keep the token in memory — a write-only collection is worse
+than either. It now reads at boot (with a logged fallback if that read itself fails), so a pm2/deploy
+restart — typically well inside the oplog window, which is exactly when resuming succeeds — resumes
+cleanly, while reconnects still use the in-memory cache with no extra round trip.
+
+**A premise in §16 that this implementation does not share, now recorded in both the code and here.**
+§16 justifies the resume fix with "the notification dispatcher makes push delivery load-bearing" — but
+the dispatcher built here rides its own scheduled event, not the change stream, so notification
+delivery does not depend on that stream at all. The fix still stands on the independent M2b.4 gap it
+closes for `reportArrived`. Cross-referenced in the publisher and in the dispatch handler so the
+record and the code agree.
+
+**A flake reported honestly, chased, and hardened rather than waved through.** The delivery saw two
+anomalous single-test failures under heavy load, could not capture them, and said so instead of
+omitting it. Both candidates were real-timer windows in the new spec. They are now event-driven with
+generous poll-until-condition timeouts (which cost nothing on the happy path and only change how long
+a genuine failure takes to surface), each with a comment justifying its number. I then ran the server
+suite **12 times across two rounds** with zero failures.
+
+**Verification (orchestrator-run, from a `pnpm clean` tree).** **972 tests** (game-core 519, server
+**340** — up from 326 — web 113), gate exit 0, prettier clean (run by me), six further server runs at
+340/340. The +2 over the first delivery are the two new unit tests proving cold-boot resume and
+in-memory reconnect resume.
+
+### M3e.2 — the Units tab ✅ (2026-08-21)
+
+§17's first UI surface, and the first M3e step that touches `apps/web`. No server changes were needed
+or made — every endpoint and formula already existed.
+
+**The roster, grouped by training building.** Three cards (Barracks / Machine Shop / Command Center),
+each listing what that building trains for the player's own faction plus the faction-neutral Settler.
+Per unit: the Russian name from the existing `units` namespace, the full stat line, cost, Food upkeep,
+and **train time at this settlement's current building level** — §2's rule that the building's level
+speeds training up, made visible. Wildlife never appears (nobody can train it). Every number comes
+from `game-core`; nothing is hardcoded, and a test asserts two different building levels render two
+different train times.
+
+**The army overview is the point of the step** — §17 calls it "the visible answer to §3". Home, away
+and stationed each render with their own Food cost from `calcTroopFoodUpkeepPerHour`, alongside
+`netFoodPerHour`, plus an i18n line stating the rule players would otherwise report as a bug: **all
+three groups eat this settlement's Food.** A marching army still costs its owner; hosted guests are
+fed by the host, not by whoever sent them.
+
+**Training stayed on the Base screen as well, deliberately.** M2c's onboarding loop is "build a
+Barracks → train a scout → scout somebody", and moving that behind a tab switch would regress it. The
+two surfaces share one queue-row component and one reason-translation hook, extracted rather than
+duplicated, so they cannot drift on wording or countdown behaviour; both hit the same endpoint and the
+same per-building queue cap, so there is no double-booking.
+
+**The countdown test asserts the boundary, not the slope** — the standing lesson from M1c, where a
+test watched the timer decrease and missed that nothing happened at zero. This one crosses zero and
+asserts the refetch fires.
+
+**`wrongFaction` is covered at the function level, not the component, and that is correct.** The
+rendered roster is pre-filtered to the caller's faction plus the Settler (§17 says "own faction plus
+the Settler", not "everyone's units greyed out"), so the reason is structurally unreachable through
+the UI. It is still implemented and unit-tested against `computeUnitTrainEligibility`, which is the
+client's source of truth for agreeing with the server on *every* input, not only the ones this screen
+happens to construct. Flagged by the delivery rather than quietly dropped.
+
+**Carried debt, fold into M3e.4:** a stationed contingent renders its owner and origin as raw 24-hex
+ObjectIds, because `SettlementStationedContingentView` carries no names and no client-side endpoint
+resolves them. Correctly left alone here (it needs a server change, out of this step's scope), but it
+is not shippable UI. M3e.4 already deals with support and owner names — and its recall/evict
+affordances need to name a contingent's owner anyway — so it widens the settlement view with
+batch-resolved names, the way `MapService.getMapView` already resolves owner names.
+
+**Verification (orchestrator-run, from a `pnpm clean` tree).** **985 tests** (game-core 519, server
+340, web **126** — up from 113), gate exit 0, prettier clean (run by me). 13 new web tests: 8 in
+`UnitsScreen.test.tsx`, 5 in `trainEligibility.test.ts`.
+
+### M3e.3 — the attack flow and protection badges ✅ (2026-08-21)
+
+§17's attack surface. No server changes — `POST /api/movements` already accepted everything the form
+sends.
+
+**The client mirrors the server's validation rather than restating it.** `armyEligibility.ts` filters
+the pickable army by §1/§9's role rules (no scouts on a raid or assault, siege only on an assault,
+never Settlers or wildlife) and every rejection surfaces the server's own `errors.movement.*` key
+verbatim — a second, independently-worded copy of "no scouts in an attack" is exactly how client and
+server drift, and the player is the one who finds out. `movementLegality.ts` holds the target-kind
+matrix as a pure, separately-tested function: a foreign settlement takes all three types, an oasis
+takes raid/assault but never support (§10/§8), your own *other* settlement takes support only (§8),
+and the origin settlement itself takes nothing (M3c.6's `targetIsOrigin`).
+
+**The travel preview now genuinely depends on the selection.** `ScoutForm` already derived speed from
+the actual army rather than assuming, with a comment explaining why — with one scout type per faction
+that was moot; with a mixed army the slowest unit really does decide. A test asserts the preview
+changes when a slower unit is added, against `travelTimeMs` computed independently.
+
+**Protection is derived once, from the server clock.** `MapScreen` computes `serverNow` from the map
+payload and threads it to both the markers and the sheet so the two can never disagree about "now";
+`isBeginnerProtected` decides, never a locally re-derived rule. Protection is skipped for your own
+settlements exactly as the server skips it. The badge appears on the marker and in the sheet, and the
+hostile actions are disabled with `errors.movement.targetProtected` — so nobody raises an army for a
+target the server would reject. Both the protected and the already-expired cases are tested.
+
+**One existing test was legitimately changed**, and the delivery flagged it rather than slipping it
+through: M2c.2 asserted an oasis offers *no* scout action, which §10 explicitly reverses ("Scouting an
+oasis is now allowed"). The test now asserts the new behaviour and the now-false `sheet.oasisNoScout`
+i18n key was deleted. Verified in the diff.
+
+**Judgment calls accepted:** `sumAttackPoints` is duplicated client-side as a one-line sum over a
+public catalogue field, mirroring the server's own private helper — not a balance formula, so not a
+`game-core` candidate; `'wall'` needed no special-casing because it is already a member of
+`BUILDING_TYPES`; and `ScoutForm`/`sendScouts` were left as their own path rather than folded into the
+new form, keeping 25 existing scout tests unperturbed.
+
+**Verification (orchestrator-run, from a `pnpm clean` tree).** **1010 tests** (game-core 519, server
+340, web **151** — up from 126), gate exit 0, prettier clean. Prettier was again reported with
+paraphrased output ("Prettier: All files formatted correctly" is not what it prints), so I ran the
+exact command myself: `All matched files use Prettier code style!`, exit 0.

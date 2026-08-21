@@ -8,6 +8,7 @@ import type {
   RegisterInput,
   ReportsPageView,
   ReportView,
+  SendMovementInput,
   SendScoutsInput,
   SettlementStateView,
 } from './types';
@@ -60,11 +61,12 @@ export function cancelBuild(
   );
 }
 
-// §7/§11: one route, `{unitType, count}` — the server resolves faction ownership against
-// `account.faction` itself (`TrainUnitsDto`'s own comment). The Barracks card (M3a.5's only
-// client caller today) still only ever sends its own faction's scout; the server's
-// `trainUnits` command behind this same route already accepts the whole roster.
-export function trainScouts(
+// §7/§11/M3 §2: one route, `{unitType, count}` — the server resolves faction ownership against
+// `account.faction` itself (`TrainUnitsDto`'s own comment), and already accepts any unit type
+// at any of the three training buildings. Generalized from the M3a.5-era `trainScouts` when
+// the Units tab (M3e.2) needed to train the whole roster, not just the Barracks card's own
+// faction scout — same route, same body shape, just no longer scout-only in name.
+export function trainUnits(
   id: string,
   unitType: UnitType,
   count: number,
@@ -86,6 +88,17 @@ export function fetchMyMovements(signal?: AbortSignal): Promise<MovementView[]> 
 }
 
 export function sendScouts(input: SendScoutsInput, signal?: AbortSignal): Promise<MovementView> {
+  return apiClient.post<MovementView>('/movements', input, signal);
+}
+
+// M3e.3 (§17/§9): the raid/assault/support form (`AttackForm`) posts to the exact same route
+// as `sendScouts` — one endpoint, `MovementsService.sendMovement` dispatches on `type` — kept
+// as its own function rather than widening `sendScouts` itself so every existing scout call
+// site's input type stays exactly `SendScoutsInput`, never a union it has to narrow out of.
+export function sendMovement(
+  input: SendMovementInput,
+  signal?: AbortSignal,
+): Promise<MovementView> {
   return apiClient.post<MovementView>('/movements', input, signal);
 }
 

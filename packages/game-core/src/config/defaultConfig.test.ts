@@ -15,4 +15,9 @@ describe('DEFAULT_CONFIG', () => {
   it('ships the shared casualty-curve exponent at 1.5 (§5, draft number)', () => {
     expect(DEFAULT_CONFIG.combat.lossExponent).toBe(1.5);
   });
+
+  // M3d.1, §13, owner decision 3: "Three 'Settler' units, trained at the Command Center".
+  it('ships settle.settlersRequired at 3 (§13, draft number)', () => {
+    expect(DEFAULT_CONFIG.settle.settlersRequired).toBe(3);
+  });
 });

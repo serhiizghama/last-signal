@@ -41,8 +41,15 @@ export class MapService {
     // collection scan of comparable size costs about the same as the settlements query itself
     // and is far simpler to read/test than an aggregation pipeline that does the same join
     // server-side.
+    // `protectedUntil` widens this projection by exactly the one field M3c.8/§19.8 adds
+    // (`docs/M3_DESIGN_DECISIONS.md` §11) — `name`/`faction`/`side` are untouched, and no
+    // other account field is added alongside it (§19.8: "must not be relaxed to show
+    // protection status plus anything else").
     const ownerIds = [...new Set(settlementDocs.map((doc) => String(doc.accountId)))];
-    const ownerDocs = await this.accountModel.find({ _id: { $in: ownerIds } }, 'name faction side');
+    const ownerDocs = await this.accountModel.find(
+      { _id: { $in: ownerIds } },
+      'name faction side protectedUntil',
+    );
     const ownerById = new Map(ownerDocs.map((doc) => [String(doc._id), doc]));
 
     const settlements: MapSettlementView[] = [];
@@ -54,7 +61,7 @@ export class MapService {
       // miss. Skipped rather than thrown: the map stays a read-only, best-effort view, and one
       // stale row is not worth failing the whole response for every player.
       if (!owner) continue;
-      settlements.push(buildMapSettlementView(doc, owner));
+      settlements.push(buildMapSettlementView(doc, owner, now));
     }
 
     return {

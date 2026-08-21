@@ -5,89 +5,20 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { trainScouts } from '../api/endpoints';
-import type {
-  AccountView,
-  SettlementStateView,
-  SettlementTrainingQueueItemView,
-  SettlementTroopView,
-} from '../api/types';
+import { trainUnits } from '../api/endpoints';
+import type { AccountView, SettlementStateView, SettlementTroopView } from '../api/types';
 import { ErrorPanel } from '../components/StatusPanels';
-import { useRefetchOnExpiry } from '../hooks/useRefetchOnExpiry';
-import { useCountdown } from '../hooks/useServerClock';
 import { CostList } from './CostList';
-import { SETTLEMENTS_MINE_KEY, updateSettlementCache } from './settlementCache';
-import type { TrainBlockReason } from './trainEligibility';
+import { updateSettlementCache } from './settlementCache';
 import { computeTrainEligibility } from './trainEligibility';
+import { TrainingQueueRow } from './TrainingQueueRow';
+import { useTrainBlockReasonText } from './useTrainBlockReasonText';
 import type { LiveResources } from './useLiveResources';
 
 interface TrainingSectionProps {
   settlement: SettlementStateView;
   live: LiveResources;
   account: AccountView;
-}
-
-/** Translates a `TrainBlockReason` through the same `errors.training.*` keys the server itself rejects with (§7/§11) — client and server never disagree on the wording. */
-function useTrainBlockReasonText(block: TrainBlockReason | undefined): string | undefined {
-  const { t: tErrors } = useTranslation('errors');
-  if (!block) {
-    return undefined;
-  }
-  switch (block.kind) {
-    case 'noFaction':
-      return tErrors('training.noFaction');
-    case 'buildingMissing':
-      return tErrors('training.buildingMissing');
-    case 'queueBusy':
-      return tErrors('training.queueBusy');
-    case 'wouldStarve':
-      return tErrors('training.wouldStarve');
-    case 'insufficientResources':
-      return tErrors('training.insufficientResources');
-  }
-}
-
-interface TrainingQueueRowProps {
-  item: SettlementTrainingQueueItemView;
-  serverTime: number;
-}
-
-/** The active order: unit name, "N of M" remaining, and a live countdown to the next unit — no cancel affordance (§7: training orders can't be cancelled, unlike builds). */
-function TrainingQueueRow({ item, serverTime }: TrainingQueueRowProps): ReactElement {
-  const { t } = useTranslation();
-  const { t: tUnits } = useTranslation('units');
-  const queryClient = useQueryClient();
-  const remainingMs = useCountdown(serverTime, item.nextCompletesAt);
-
-  // Once the countdown to the next unit hits zero, the server has (or is about to have)
-  // credited it via its own chained `trainingComplete` event (§7) — refetch (bounded retry,
-  // see `useRefetchOnExpiry`) rather than leaving the queue stuck at "00:00"/the stale
-  // remaining count forever (the defect the orchestrator found in review). The order keeps
-  // the same `id` across its whole batch, unlike a build queue item, so the watch key folds
-  // in `nextCompletesAt` too — a fresh value means the server has moved on to the next unit
-  // and this specific completion needs its own watch cycle.
-  useRefetchOnExpiry<SettlementStateView>(
-    queryClient,
-    remainingMs === 0,
-    `${item.id}:${item.nextCompletesAt}`,
-    SETTLEMENTS_MINE_KEY,
-    (s) =>
-      s.trainingQueue.some((q) => q.id === item.id && q.nextCompletesAt === item.nextCompletesAt),
-  );
-
-  return (
-    <div className="training-queue-item">
-      <span className="training-queue-item__name">
-        {tUnits(`${item.unitType as UnitType}.name`)}
-      </span>
-      <span className="training-queue-item__progress">
-        {t('base.trainingProgress', { remaining: item.remainingCount, total: item.totalCount })}
-      </span>
-      <span className="training-queue-item__countdown">
-        {t('base.trainingNextIn', { duration: formatDuration(remainingMs ?? 0) })}
-      </span>
-    </div>
-  );
 }
 
 interface HomeTroopsListProps {
@@ -123,10 +54,17 @@ function HomeTroopsList({ troops }: HomeTroopsListProps): ReactElement {
  * from `game-core` so the player sees them before submitting; a server rejection still renders
  * through the same `errors.training.*` i18n path via `ErrorPanel`.
  *
- * Still trains only the faction's own scout, at the Barracks (M3a.5): the server's
- * `trainUnits` already accepts the whole roster across all three training buildings, but
- * widening this card into the full Units tab (unit picker, Machine Shop/Command Center cards)
- * is deliberately M3e's job, not this step's — see `computeTrainEligibility`'s own comment.
+ * Deliberately kept scout-only and left right here on the Base screen (M3e.2 decision, not an
+ * oversight): the Units tab (`units/UnitsScreen.tsx`) is now where §17 puts the full roster —
+ * Barracks/Machine Shop/Command Center cards for every trainable unit, reusing this same
+ * countdown row (`TrainingQueueRow`) and eligibility function
+ * (`computeUnitTrainEligibility`, the general form `computeTrainEligibility` below now
+ * delegates to). This card stays as the Base screen's own quick "train a scout without
+ * switching tabs" convenience — the M2c onboarding loop is literally "build a Barracks, train
+ * a scout, scout somebody" (M3 §11), and moving that action behind a tab switch would be a
+ * regression for the exact flow that loop teaches. Training a scout here and training one from
+ * the Units tab hit the identical endpoint and the identical per-building queue, so there is
+ * no double-booking between the two surfaces.
  */
 export function TrainingSection({ settlement, live, account }: TrainingSectionProps): ReactElement {
   const { t } = useTranslation();
@@ -147,7 +85,7 @@ export function TrainingSection({ settlement, live, account }: TrainingSectionPr
 
   const trainMutation = useMutation({
     mutationFn: (input: { unitType: UnitType; count: number }) =>
-      trainScouts(settlement.id, input.unitType, input.count),
+      trainUnits(settlement.id, input.unitType, input.count),
     onSuccess: (updated) => updateSettlementCache(queryClient, updated),
   });
 

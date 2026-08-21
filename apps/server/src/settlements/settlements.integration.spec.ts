@@ -21,6 +21,7 @@ import {
   calcTrainCost,
   calcTrainTimeMs,
   calcTroopFoodUpkeepPerHour,
+  merchantsFromMarketLevel,
   msUntilEmpty,
   resolveStarvation,
   scoutUnitForFaction,
@@ -104,6 +105,9 @@ describe('Settlements (integration)', () => {
     app = moduleRef.createNestApplication();
     app.setGlobalPrefix('api');
     await app.init();
+    // Explicit IPv4-bound single listener — avoids ephemeral-port collisions with other
+    // local processes; see `accounts.integration.spec.ts`'s beforeAll for why this matters.
+    await app.listen(0, '127.0.0.1');
 
     connection = moduleRef.get(getConnectionToken());
     accountModel = moduleRef.get(getModelToken(Account.name));
@@ -527,6 +531,10 @@ describe('Settlements (integration)', () => {
 
     const before = await getState(settlementId, cookie);
     expect(before.status).toBe(200);
+    // M3d.4 (§14): no Market built in this fixture -> both merchant fields read 0, the same
+    // `merchantsFromMarketLevel` level-0 case its own comment documents.
+    expect(before.body.merchantsTotal).toBe(0);
+    expect(before.body.merchantsBusy).toBe(0);
     const expectedCost = calcBuildCost(config, type, 1);
 
     const buildResponse = await postBuild(settlementId, cookie, type);
@@ -567,9 +575,37 @@ describe('Settlements (integration)', () => {
     const built = after.body.buildings.find((b: { type: string }) => b.type === type);
     expect(built).toBeDefined();
     expect(built.level).toBe(1);
+    // Still no Market, still 0 — a completed, unrelated build doesn't touch merchant state.
+    expect(after.body.merchantsTotal).toBe(0);
+    expect(after.body.merchantsBusy).toBe(0);
 
     const doneEvent = await eventModel.findById(scheduledEvent?._id);
     expect(doneEvent?.status).toBe('done');
+  });
+
+  // M3d.4 (§14): `SettlementStateView.merchantsTotal`/`merchantsBusy`, extending this file's
+  // existing view-shape coverage above rather than replacing it — every derived number here
+  // must come from `game-core`'s own `merchantsFromMarketLevel`, never a hand-copied multiple.
+  it('merchant state on the view: merchantsTotal derives from the Market level, merchantsBusy is the raw counter', async () => {
+    const { accountId, cookie } = await createGuestSession();
+    const marketLevel = 4;
+    const settlementId = await seedSettlement(accountId, {
+      buildings: [
+        { type: 'commandCenter', level: 1 },
+        { type: 'market', level: marketLevel },
+      ],
+    });
+    // Seeded directly via Mongoose — the same "set up the exact scenario a test needs"
+    // convention this file's own `seedSettlement` already establishes — since nothing in this
+    // suite otherwise occupies merchants (that is `MarketService`'s own job, exercised end to
+    // end in `market.integration.spec.ts`).
+    const busyMerchants = 3;
+    await settlementModel.updateOne({ _id: settlementId }, { $set: { busyMerchants } });
+
+    const state = await getState(settlementId, cookie);
+    expect(state.status).toBe(200);
+    expect(state.body.merchantsTotal).toBe(merchantsFromMarketLevel(config, marketLevel));
+    expect(state.body.merchantsBusy).toBe(busyMerchants);
   });
 
   it('prerequisites: a gated building fails with prerequisitesNotMet and charges nothing', async () => {

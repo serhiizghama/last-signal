@@ -13,10 +13,10 @@ export type NavTab = (typeof NAV_ITEMS)[number];
 
 /**
  * Screens that actually exist and can be switched to. Map and Base joined in M2c.1, Reports in
- * M2c.3 — the rest stay visibly present but disabled rather than faked, so the player can see
- * what's coming without being able to open a screen that isn't built yet.
+ * M2c.3, Units in M3e.2 — the rest stay visibly present but disabled rather than faked, so the
+ * player can see what's coming without being able to open a screen that isn't built yet.
  */
-const ENABLED_TABS: readonly NavTab[] = ['map', 'base', 'reports'];
+const ENABLED_TABS: readonly NavTab[] = ['map', 'base', 'units', 'reports'];
 
 interface BottomNavProps {
   active: NavTab;

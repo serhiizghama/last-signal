@@ -14,6 +14,16 @@ import type { ResourceAmounts } from './settlement.schema';
 // a player can actually produce; the schema only needs to be permissive enough to store
 // whatever the command layer is willing to write, which is why every type lands in one pass
 // instead of being widened six times.
+//
+// **`settle` (M3d.1) and `trade` (M3d.3) have since gained real producers** — recorded here
+// rather than rewriting the paragraph above, which is still an accurate account of the
+// widening's own reasoning at M3c.2. `settle` is created by `MovementsService.sendMovement`,
+// the ordinary send path. `trade` is NOT — see `MovementsService.sendMovement`'s own comment
+// on `SENDABLE_MOVEMENT_TYPES` (`movements.util.ts`): a `trade` movement carries `cargo`
+// (resources), never `units`, and always comes paired with a sibling leg created in the same
+// transaction, which is a shape only `MarketService.acceptOffer`
+// (`POST /api/market/offers/:id/accept`) knows how to construct correctly. A player can never
+// hand-assemble one through the generic movement endpoint.
 export type MovementType = 'scout' | 'raid' | 'assault' | 'support' | 'settle' | 'trade';
 const MOVEMENT_TYPES: MovementType[] = ['scout', 'raid', 'assault', 'support', 'settle', 'trade'];
 export const MOVEMENT_TYPE_SCOUT: MovementType = 'scout';
@@ -78,6 +88,35 @@ export class MovementLoot implements ResourceAmounts {
 
 const MovementLootSchema = SchemaFactory.createForClass(MovementLoot);
 
+// What a `trade` movement carries (M3d.3, `docs/M3_DESIGN_DECISIONS.md` §14) — a settlement's
+// merchants moving resources by agreement rather than a raid's units taking them by force.
+// Same `ResourceAmounts` shape as `MovementLoot` above, and declared locally for the exact
+// same reason that class is: this file's own established convention (see `MovementLoot`'s
+// comment) is to mirror a subdocument's *shape*, not reach across schema files for the class
+// or alias an existing local one. A separate `MovementCargo` class — not a second field typed
+// against `MovementLootSchema` — is deliberate even though the shape coincides today: `loot`
+// and `cargo` are different concepts that happen to share a shape by coincidence (both are "a
+// bundle of the four resources"), the same way `MovementUnitEntry` and
+// `SettlementTroopEntry` share a shape without being the same class; aliasing them would make
+// a future divergence (e.g. `cargo` growing a field `loot` never needs) an awkward split
+// instead of a one-line addition to an already-independent class.
+@Schema({ _id: false })
+export class MovementCargo implements ResourceAmounts {
+  @Prop({ type: Number, required: true, default: 0 })
+  scrap!: number;
+
+  @Prop({ type: Number, required: true, default: 0 })
+  fuel!: number;
+
+  @Prop({ type: Number, required: true, default: 0 })
+  electronics!: number;
+
+  @Prop({ type: Number, required: true, default: 0 })
+  food!: number;
+}
+
+const MovementCargoSchema = SchemaFactory.createForClass(MovementCargo);
+
 export type MovementDocument = HydratedDocument<Movement>;
 
 @Schema({
@@ -103,17 +142,22 @@ export class Movement {
   // single indexed `findById` instead of a coordinate scan.
   //
   // Optional as of M3c (§9): a `raid` or `scout` can now target a farm oasis instead of a
-  // settlement — see `toOasisId` below. INVARIANT: exactly one of `toSettlementId` /
-  // `toOasisId` is ever set on a given movement document; `target` (the coordinates, below)
-  // is always set regardless of which one, so a report or the client can render "raided
-  // (12, -4)" without a second lookup either way. Deliberately **not** enforced by a
-  // Mongoose validator: this codebase's convention for cross-field invariants on these
-  // schemas is a doc comment plus enforcement at the command layer (see e.g. `BuildingSlot`'s
-  // "16 slots max ... enforced by the application layer, not the schema") rather than a
-  // custom Mongoose validator function, and a same-document xor is exactly the shape that
-  // convention already covers — the command layer (`MovementsService`'s send commands) is the
-  // one place that already knows whether it resolved a settlement or an oasis, so it is also
-  // the natural place to guarantee it sets exactly one.
+  // settlement — see `toOasisId` below. INVARIANT (widened in M3d.1, §13): **at most one** of
+  // `toSettlementId`/`toOasisId` is ever set on a given movement document; a `settle`
+  // movement sets **neither**, because its target is a bare tile that does not exist as a
+  // document yet — there is nothing for either field to reference until
+  // `SettleArrivalResolver` either creates the settlement there (on success) or never does
+  // (on failure, the convoy simply turns around). `target` (the coordinates, below) is
+  // always set regardless of which of the three shapes a movement has, so a report or the
+  // client can render "founded (12, -4)" / "raided (12, -4)" without a second lookup either
+  // way. Deliberately **not** enforced by a Mongoose validator: this codebase's convention
+  // for cross-field invariants on these schemas is a doc comment plus enforcement at the
+  // command layer (see e.g. `BuildingSlot`'s "16 slots max ... enforced by the application
+  // layer, not the schema") rather than a custom Mongoose validator function, and this
+  // at-most-one invariant is exactly the shape that convention already covers — the command
+  // layer (`MovementsService.sendMovement`) is the one place that already knows whether it
+  // resolved a settlement, an oasis, or a bare tile, so it is also the natural place to
+  // guarantee it sets at most one.
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Settlement' })
   toSettlementId?: Types.ObjectId;
 
@@ -158,6 +202,56 @@ export class Movement {
   // wasted retroactively (M1 §5's rule, extended here).
   @Prop({ type: MovementLootSchema })
   loot?: ResourceAmounts;
+
+  // What a `trade` movement is carrying (M3d.3, §14) — absent for every other movement type,
+  // exactly like `loot`/`siegeTarget` above ("only ever set when meaningful"). Set once, at
+  // creation (`MarketService.acceptOffer`), to the exact `give`/`want` side the accepted offer
+  // names — unlike `loot`, which is computed at *arrival* from the battle, a trade's cargo is
+  // fixed the instant the two legs are created, since there is no fight to resolve it against.
+  //
+  // **Delivery timing differs from loot, and that difference is load-bearing for replay
+  // safety.** Loot is taken at arrival and credited home on the RETURN leg (`loot` stays set
+  // the whole trip). Cargo is the opposite: `TradeArrivalResolver.resolveArrival` credits it
+  // into the TARGET the moment the movement arrives (§14 — merchants deliver, they don't loot)
+  // and then **clears this field** (`$unset`) in that same write. That clear is what lets
+  // `MovementReturnHandler` — which, for every OTHER movement type, only ever *reads* a
+  // resource-bearing field — tell "already delivered, nothing more to do" (`cargo` absent)
+  // apart from "never delivered, must ride home instead" (`cargo` still present): a cancelled
+  // trade leg (§9's 90s window, supported for `trade` — see `TradeArrivalResolver`'s own
+  // file comment for why) or `TradeArrivalResolver.resolveMissingTarget`'s "destination gone"
+  // edge case both turn the movement around WITHOUT ever reaching `resolveArrival`, so `cargo`
+  // is left untouched — present — for `MovementReturnHandler` to credit home on return,
+  // clamped to the origin's own storage caps exactly like loot (`creditResourcesClamped`,
+  // `movements.util.ts`, shared by both paths so there is only one copy of that arithmetic).
+  @Prop({ type: MovementCargoSchema })
+  cargo?: ResourceAmounts;
+
+  // How many merchants this leg's round trip occupies (M3d.3, §14) — captured once, at
+  // creation, the same reasoning `TrainingQueueItem.unitTrainTimeMs` records for its own
+  // "capture the value now, don't recompute it later": a Market level (and so
+  // `merchantsFromMarketLevel`) can be retuned or the settlement's Market destroyed by a siege
+  // mid-round-trip, and the RETURN leg (`MovementReturnHandler`) must free back exactly the
+  // number of merchants this leg actually tied up at acceptance, not whatever the config or
+  // the settlement's current Market level would say today. Absent for every non-`trade`
+  // movement — merchants are not units and never march with `units` above.
+  @Prop({ type: Number })
+  merchants?: number;
+
+  // The originating `TradeOffer`'s id (M3d.3, §14) — set only on the two `trade` movements one
+  // accepted offer spawns (`MarketService.acceptOffer`). Exists for one reason: §15 gives
+  // `trade` reports to "both parties", exactly one each — not one per leg-event — but the two
+  // facts that make up that one report ("resources delivered", known at ONE leg's ARRIVAL, and
+  // "merchants freed", known at the OTHER leg's own RETURN) live on two different `Movement`
+  // documents with no other field in common, and §14's faction-flavoured merchant speeds mean
+  // neither event is guaranteed to happen before the other. `payload.tradeOfferId` is the
+  // shared key `TradeArrivalResolver`/`MovementReturnHandler` upsert the SAME report document
+  // against, whichever of the two reaches it first — see `TradeArrivalResolver`'s own comment
+  // for the full reasoning, including why an upsert (not this codebase's usual single-writer
+  // `.create()`) is the one appropriate exception here: unlike every other report in this
+  // codebase, this is the only one with two independent writers whose relative order the game
+  // rules do not fix.
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'TradeOffer' })
+  tradeOfferId?: Types.ObjectId;
 
   @Prop({ type: Number, required: true })
   departAt!: number;
